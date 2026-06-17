@@ -14,12 +14,7 @@ This project posits that the complex, interconnected history of these battle out
 
 ---
 
-## Systems Analysis and Design (SAD)
 
-For a comprehensive technical overview of the project, including database schemas, UML diagrams, and detailed architectural decisions, please refer to the official Systems Analysis and Design document:
-- [SAD Documentation (PDF)](public/readme/docs.pdf)
-
----
 
 ## System Architecture and Data Structures
 
