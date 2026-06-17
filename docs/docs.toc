@@ -1,0 +1,38 @@
+\contentsline {section}{\numberline {1}Introduction}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Background and Context}{3}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Problem Statement}{3}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Objectives}{3}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}Availability \& Open Source}{3}{subsection.1.4}%
+\contentsline {section}{\numberline {2}System Requirements}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Functional Requirements}{4}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Non-Functional Requirements}{4}{subsection.2.2}%
+\contentsline {section}{\numberline {3}System Architecture}{4}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Deployment Architecture}{5}{subsection.3.1}%
+\contentsline {section}{\numberline {4}System Models}{5}{section.4}%
+\contentsline {subsection}{\numberline {4.1}Database Schema Diagrams}{5}{subsection.4.1}%
+\contentsline {subsubsection}{\numberline {4.1.1}Relational Model (Supabase/PostgreSQL)}{5}{subsubsection.4.1.1}%
+\contentsline {subsubsection}{\numberline {4.1.2}Property Graph Model (Neo4j)}{6}{subsubsection.4.1.2}%
+\contentsline {subsection}{\numberline {4.2}Unified Modeling Language (UML) Diagrams}{7}{subsection.4.2}%
+\contentsline {subsubsection}{\numberline {4.2.1}Use Case Diagram}{7}{subsubsection.4.2.1}%
+\contentsline {subsubsection}{\numberline {4.2.2}Class Diagram}{8}{subsubsection.4.2.2}%
+\contentsline {subsubsection}{\numberline {4.2.3}Sequence Diagram}{9}{subsubsection.4.2.3}%
+\contentsline {subsection}{\numberline {4.3}Data Flow Diagram (DFD)}{10}{subsection.4.3}%
+\contentsline {section}{\numberline {5}Database Design}{11}{section.5}%
+\contentsline {subsection}{\numberline {5.1}Relational Model (Supabase/PostgreSQL)}{11}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Graph Model (Neo4j)}{12}{subsection.5.2}%
+\contentsline {section}{\numberline {6}Subsystem and Interface Design}{12}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Interactive 3D Graph Rendering Module}{12}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Administrative Synchronization Module}{12}{subsection.6.2}%
+\contentsline {section}{\numberline {7}User Interface \& Experience (UI/UX)}{13}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Visual Legend \& Symbology}{13}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}System Functionalities}{13}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Interactive Controls \& Navigation}{14}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Core Visualization Interface}{14}{subsection.7.4}%
+\contentsline {subsection}{\numberline {7.5}Interactive Overlays}{16}{subsection.7.5}%
+\contentsline {subsection}{\numberline {7.6}Mobile Responsiveness \& Interface}{17}{subsection.7.6}%
+\contentsline {subsection}{\numberline {7.7}Administrative Dashboard}{18}{subsection.7.7}%
+\contentsline {section}{\numberline {8}Technology Stack}{20}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Hardware \& Software Specifications}{20}{subsection.8.1}%
+\contentsline {section}{\numberline {9}System Limitations}{20}{section.9}%
+\contentsline {section}{\numberline {10}Recommendations \& Future Enhancements}{20}{section.10}%
+\contentsline {section}{\numberline {11}Conclusion}{21}{section.11}%
