@@ -17,9 +17,9 @@ export default async function VisualizationAdminPage() {
 
       <div className="absolute top-0 left-0 w-full p-6 flex justify-between items-start z-10 pointer-events-none">
         <div className="pointer-events-auto opacity-60 hover:opacity-100 transition-opacity duration-300 select-none">
-          <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">fliptop.3d</h1>
+          <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">kislap</h1>
           <p className="text-[#666] text-[10px] tracking-wider uppercase max-w-xs leading-relaxed">
-            Visualization of Emcees and 1v1 Battles.
+            Ang kislap na nagbibigay-liwanag sa kasaysayan at sining ng rap battle.
           </p>
         </div>
       </div>

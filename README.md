@@ -1,10 +1,10 @@
-# fliptop.3d: A Graph-Based Visualization of Battle Rap Networks
+# kislap: A Graph-Based Visualization of Battle Rap Networks
 
-**Repository:** [https://github.com/shansurat/fliptop.3d](https://github.com/shansurat/fliptop.3d)
+**Repository:** [https://github.com/shansurat/kislap](https://github.com/shansurat/kislap)
 
 ---
 
-![Fliptop.3d Interactive Graph View](public/readme/home.png)
+![kislap Interactive Graph View](public/readme/home.png)
 
 ## Introduction and Context
 
@@ -63,8 +63,8 @@ Ensure that Node.js (version 20 or higher recommended) and a package manager (np
 ### 2. Repository Initialization
 Clone the repository and enter the project directory:
 ```bash
-git clone https://github.com/shansurat/fliptop.3d.git
-cd fliptop.3d
+git clone https://github.com/shansurat/kislap.git
+cd kislap
 ```
 
 ### 3. Dependency Installation

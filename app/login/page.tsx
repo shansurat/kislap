@@ -13,7 +13,7 @@ export default async function LoginPage({
       <div className="w-full max-w-sm bg-[#121212]/30 backdrop-blur-md border border-white/5 p-8 rounded-lg">
         <form className="flex flex-col w-full">
           <div className="flex flex-col items-center mb-8">
-            <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">fliptop.3d</h1>
+            <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">kislap</h1>
             <p className="text-[#666] text-[10px] tracking-widest uppercase">Admin Portal</p>
           </div>
           

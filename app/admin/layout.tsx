@@ -18,7 +18,7 @@ export default function Neo4jLayout({ children }: { children: React.ReactNode })
       {/* Sidebar */}
       <div className="w-64 fixed h-screen top-0 left-0 bg-[#0a0a0a] border-r border-white/5 flex flex-col z-50">
         <div className="p-4 border-b border-white/5">
-          <h1 className="text-xs font-bold text-[#EFEFEF] tracking-widest uppercase">fliptop.3d Admin</h1>
+          <h1 className="text-xs font-bold text-[#EFEFEF] tracking-widest uppercase">kislap Admin</h1>
         </div>
         <nav className="flex-1 p-2 space-y-1">
           {navItems.map((item) => {

@@ -8,7 +8,7 @@ import { redis } from '@/lib/redis';
 async function invalidateCache() {
   if (redis) {
     try {
-      await redis.del('fliptop:graph_data');
+      await redis.del('kislap:graph_data');
     } catch (e) {
       console.warn('Redis cache invalidation failed:', e);
     }

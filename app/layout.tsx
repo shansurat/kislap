@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "fliptop.3d",
-  description: "Visualization of Emcees and 1v1 Battles",
+  title: "kislap",
+  description: "Ang kislap na nagbibigay-liwanag sa kasaysayan at sining ng rap battle.",
 };
 
 export default function RootLayout({

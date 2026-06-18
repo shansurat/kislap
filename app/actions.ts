@@ -7,7 +7,7 @@ import { redis } from '@/lib/redis';
 export async function fetchGraphDataForVisualization() {
   if (redis) {
     try {
-      const cached = await redis.get<{ nodes: any[], links: any[] }>('fliptop:graph_data');
+      const cached = await redis.get<{ nodes: any[], links: any[] }>('kislap:graph_data');
       if (cached) {
         return { success: true, data: cached };
       }
@@ -89,7 +89,7 @@ export async function fetchGraphDataForVisualization() {
     
     if (redis) {
       try {
-        await redis.set('fliptop:graph_data', payload);
+        await redis.set('kislap:graph_data', payload);
       } catch (e) {
         console.warn('Redis cache write failed:', e);
       }
