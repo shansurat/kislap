@@ -9,8 +9,7 @@ export default function Neo4jLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
 
   const navItems = [
-    { name: 'Emcees', href: '/admin' },
-    { name: 'Battles', href: '/admin/battles' },
+    { name: 'Dashboard', href: '/admin' },
   ];
 
   return (

@@ -19,7 +19,7 @@ export default async function VisualizationAdminPage() {
         <div className="pointer-events-auto opacity-60 hover:opacity-100 transition-opacity duration-300 select-none">
           <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">kislap</h1>
           <p className="text-[#666] text-[10px] tracking-wider uppercase max-w-xs leading-relaxed">
-            Ang kislap na nagbibigay-liwanag sa kasaysayan at sining ng rap battle.
+            Mapping the constellation of Filipino battle rap.
           </p>
         </div>
       </div>

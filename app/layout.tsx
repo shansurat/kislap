@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "kislap",
-  description: "Ang kislap na nagbibigay-liwanag sa kasaysayan at sining ng rap battle.",
+  description: "Mapping the constellation of Filipino battle rap.",
 };
 
 export default function RootLayout({
