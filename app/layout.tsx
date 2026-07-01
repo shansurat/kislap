@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "kislap",
+  title: "pulso",
   description: "Mapping the constellation of Filipino battle rap.",
 };
 

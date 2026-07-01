@@ -13,10 +13,10 @@ export default async function LoginPage({
       <div className="w-full max-w-sm bg-[#121212]/30 backdrop-blur-md border border-white/5 p-8 rounded-lg">
         <form className="flex flex-col w-full">
           <div className="flex flex-col items-center mb-8">
-            <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">kislap</h1>
+            <h1 className="text-lg font-bold text-[#EFEFEF] tracking-widest uppercase mb-1">pulso</h1>
             <p className="text-[#666] text-[10px] tracking-widest uppercase">Admin Portal</p>
           </div>
-          
+
           <label className="text-[10px] text-[#888] uppercase tracking-widest font-semibold mb-1.5" htmlFor="email">
             Email Address
           </label>
@@ -27,7 +27,7 @@ export default async function LoginPage({
             required
             type="email"
           />
-          
+
           <label className="text-[10px] text-[#888] uppercase tracking-widest font-semibold mb-1.5" htmlFor="password">
             Password
           </label>
@@ -38,14 +38,14 @@ export default async function LoginPage({
             required
             type="password"
           />
-          
+
           <button
             formAction={login}
             className="w-full bg-white/[0.07] hover:bg-white/[0.12] text-[#EFEFEF] border border-white/10 rounded-md py-2.5 text-xs font-semibold uppercase tracking-wider transition-all duration-300 cursor-pointer"
           >
             Sign In
           </button>
-          
+
           {message && (
             <p className="mt-4 p-3 bg-red-950/20 border border-red-500/10 text-red-400/80 text-xs text-center rounded-md font-mono">
               {message}

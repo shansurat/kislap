@@ -1,10 +1,10 @@
-# kislap: A Graph-Based Visualization of Battle Rap Networks
+# pulso: A Graph-Based Visualization of Battle Rap Networks
 
-**Repository:** [https://github.com/shansurat/kislap](https://github.com/shansurat/kislap)
+**Repository:** [https://github.com/shansurat/pulso](https://github.com/shansurat/pulso)
 
 ---
 
-![kislap Interactive Graph View](public/readme/home.png)
+![pulso Interactive Graph View](public/readme/home.png)
 
 ## Introduction and Context
 
@@ -63,8 +63,8 @@ Ensure that Node.js (version 20 or higher recommended) and a package manager (np
 ### 2. Repository Initialization
 Clone the repository and enter the project directory:
 ```bash
-git clone https://github.com/shansurat/kislap.git
-cd kislap
+git clone https://github.com/shansurat/pulso.git
+cd pulso
 ```
 
 ### 3. Dependency Installation
