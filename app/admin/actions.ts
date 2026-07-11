@@ -68,7 +68,7 @@ export async function fetchGraphDataForVisualization() {
 
     const linksRes = await session.run(`
       MATCH (source:Emcee)-[r]->(target:Emcee)
-      WHERE type(r) IN ['DEFEATED', 'BATTLED']
+      WHERE type(r) = 'DEFEATED' OR (type(r) = 'BATTLED' AND source.id < target.id)
       MATCH (b:Battle {id: r.battle_id})
       OPTIONAL MATCH (b)-[:HELD_AT]->(ev:Event)
       RETURN source.id AS source, target.id AS target, type(r) AS type, ev.year AS year, b.match_type AS match_type, b.match_format AS match_format

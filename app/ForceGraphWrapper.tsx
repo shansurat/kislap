@@ -1,15 +1,17 @@
 'use client'
 
-import { useRef, useEffect, useState, useMemo } from 'react';
+import { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
+import * as THREE from 'three';
+import SpriteText from 'three-spritetext';
 
 const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { ssr: false });
 
 interface GraphData {
   nodes: { id: string; name: string; val: number; group?: string; hometown?: string | null; total_views?: number | null; avatar_url?: string | null }[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  links: { source: string | any; target: string | any; type: string; year?: number | null; match_type?: string | null; match_format?: string | null; battle_name?: string | null; view_count?: number | null; event_name?: string | null }[];
+  links: { source: string | any; target: string | any; type: string; year?: number | null; match_type?: string | null; match_format?: string | null; battle_name?: string | null; view_count?: number | null; event_name?: string | null; battle_id?: string | null }[];
 }
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -29,15 +31,23 @@ const FORMAT_LABELS: Record<string, string> = {
   handicap: 'Handicap',
 };
 
+const HUB_FORMATS = ['royal_rumble', '3way'];
+
+const getWinRateColor = (rate: number) => `hsl(${Math.round(rate * 120)}, 80%, 50%)`;
+
 export default function GraphClient({ graphData }: { graphData: GraphData }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+
+  const [selectedFormats, setSelectedFormats] = useState<string[]>(['1v1', '2v2', '3v3', '5v5', '3way', 'royal_rumble', 'handicap']);
+  const [isFormatDropdownOpen, setIsFormatDropdownOpen] = useState<boolean>(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [showLabels, setShowLabels] = useState<boolean>(true);
   const [selectedYear, setSelectedYear] = useState<string>('All');
   const [selectedMatchType, setSelectedMatchType] = useState<string>('All');
-  const [selectedFormat, setSelectedFormat] = useState<string>('All');
-  const containerRef = useRef<HTMLDivElement>(null);
 
+  const containerRef = useRef<HTMLDivElement>(null);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedLink, setSelectedLink] = useState<any | null>(null);
@@ -46,92 +56,226 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   const [sizeBasis, setSizeBasis] = useState<'battles' | 'views'>('battles');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  const selectedNode = useMemo(() => {
-    if (!selectedNodeId) return null;
-    return graphData.nodes.find(n => n.id === selectedNodeId) || null;
-  }, [selectedNodeId, graphData]);
-
-  // Reset selection on filter changes
   useEffect(() => {
     setSelectedNodeId(null);
     setSelectedLink(null);
-  }, [selectedYear, selectedMatchType, selectedFormat]);
+  }, [selectedYear, selectedMatchType, selectedFormats]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsFormatDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const availableYears = useMemo(() => {
     const years = new Set<number>();
-    graphData.links.forEach(link => {
-      if (link.year != null) years.add(link.year);
-    });
+    graphData.links.forEach(link => { if (link.year != null) years.add(link.year); });
     return Array.from(years).sort((a, b) => b - a);
   }, [graphData]);
 
   const availableMatchTypes = useMemo(() => {
     const types = new Set<string>();
     graphData.links.forEach(link => {
-      if (link.match_type) {
-        if (!['tournament', 'non_tournament_judged'].includes(link.match_type)) {
-          return;
-        }
-        types.add(link.match_type);
-      }
+      if (link.match_type && ['tournament', 'non_tournament_judged'].includes(link.match_type)) types.add(link.match_type);
     });
     return Array.from(types).sort();
   }, [graphData]);
 
-  const availableFormats = useMemo(() => {
-    const formats = new Set<string>();
-    graphData.links.forEach(link => {
-      if (link.match_format) formats.add(link.match_format);
-    });
-    return Array.from(formats).sort();
-  }, [graphData]);
-
   const displayData = useMemo(() => {
-    let links = graphData.links;
-    let nodes = graphData.nodes;
+    // 1. Filter links based on selected filters (Year, Match Type, and Match Format list)
+    let initialLinks = graphData.links.filter(link => {
+      if (link.type === 'MEMBER_OF') return true; // Kept for now; filtered later if team is inactive
+      
+      // Exclude tryout and promo (default behavior)
+      if (link.match_type === 'tryout' || link.match_type === 'promo') return false;
 
-    links = links.filter(link =>
-      link.type === 'DEFEATED' &&
-      link.match_format === '1v1' &&
-      link.match_type !== 'tryout' &&
-      link.match_type !== 'promo'
-    );
-    nodes = nodes.filter(node => node.group === 'Emcee');
+      // Filter by Year
+      if (selectedYear !== 'All' && link.year !== parseInt(selectedYear)) return false;
 
-    if (selectedYear !== 'All') {
-      const targetYear = parseInt(selectedYear);
-      links = links.filter(link => link.year === targetYear);
+      // Filter by Match Type
+      if (selectedMatchType !== 'All' && link.match_type !== selectedMatchType) return false;
+
+      // Filter by selected Match Formats
+      const format = link.match_format || '1v1';
+      return selectedFormats.includes(format);
+    });
+
+    // 2. Scan links to find royal rumbles / 3-way matches and group them
+    const battleHubs: Record<string, {
+      id: string;
+      name: string;
+      event_name: string;
+      year: number;
+      winnerId: string | null;
+      participants: Set<string>;
+      view_count: number | null;
+      match_type: string;
+      match_format: string;
+    }> = {};
+
+    initialLinks.forEach(link => {
+      if (link.type === 'MEMBER_OF') return;
+      if (HUB_FORMATS.includes(link.match_format || '')) {
+        const battleId = link.battle_id;
+        if (!battleId) return;
+
+        if (!battleHubs[battleId]) {
+          const defaultName = link.match_format === '3way' ? '3-Way Battle' : 'Royal Rumble';
+          battleHubs[battleId] = {
+            id: battleId,
+            name: link.battle_name || defaultName,
+            event_name: link.event_name || '',
+            year: link.year || 0,
+            winnerId: null,
+            participants: new Set<string>(),
+            view_count: link.view_count || null,
+            match_type: link.match_type || 'other',
+            match_format: link.match_format || 'royal_rumble'
+          };
+        }
+
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+
+        battleHubs[battleId].participants.add(sId);
+        battleHubs[battleId].participants.add(tId);
+
+        if (link.type === 'DEFEATED') {
+          battleHubs[battleId].winnerId = sId;
+        }
+      }
+    });
+
+    const getBattleName = (hub: typeof battleHubs[string]) => {
+      const defaultGenericNames = ['Royal Rumble', '3-Way Battle', '3way', 'royal_rumble'];
+      const hasSpecificName = hub.name && !defaultGenericNames.includes(hub.name);
+      
+      if (hasSpecificName) return hub.name;
+
+      const names = Array.from(hub.participants).map(pId => {
+        const node = graphData.nodes.find(n => n.id === pId);
+        return node ? node.name : pId;
+      });
+
+      if (hub.winnerId) {
+        const winnerNode = graphData.nodes.find(n => n.id === hub.winnerId);
+        const winnerName = winnerNode ? winnerNode.name : hub.winnerId;
+        const otherNames = names.filter(n => n !== winnerName);
+        return [winnerName, ...otherNames].join(' vs ');
+      }
+
+      return names.sort().join(' vs ');
+    };
+
+    // 3. Separate standard links from hub links, and generate redirected links
+    const nonRumbleLinks = initialLinks.filter(link => !HUB_FORMATS.includes(link.match_format || '') || link.type === 'MEMBER_OF');
+    const rumbleRedirectedLinks: typeof graphData.links = [];
+
+    Object.values(battleHubs).forEach(rumble => {
+      const resolvedBattleName = getBattleName(rumble);
+      rumble.participants.forEach(participantId => {
+        const isWinner = rumble.winnerId === participantId;
+        const linkType = isWinner ? 'WON' : 'LOST';
+        const type = rumble.winnerId ? linkType : 'PARTICIPATED_IN';
+
+        rumbleRedirectedLinks.push({
+          source: isWinner ? participantId : rumble.id,
+          target: isWinner ? rumble.id : participantId,
+          type: type,
+          battle_id: rumble.id,
+          match_format: rumble.match_format,
+          battle_name: resolvedBattleName,
+          event_name: rumble.event_name,
+          year: rumble.year,
+          view_count: rumble.view_count,
+          match_type: rumble.match_type
+        });
+      });
+    });
+
+    let links = [...nonRumbleLinks, ...rumbleRedirectedLinks];
+
+    // 4. Initial node filter (Emcees and Teams)
+    let nodes = graphData.nodes.filter(node => node.group === 'Emcee' || node.group === 'Team');
+
+    // If '1v1' is the ONLY checked format, hide teams and member links completely
+    const showTeams = selectedFormats.some(f => f !== '1v1');
+    if (!showTeams) {
+      nodes = nodes.filter(node => node.group !== 'Team');
+      links = links.filter(link => link.type !== 'MEMBER_OF');
     }
 
-    if (selectedMatchType !== 'All') {
-      links = links.filter(link => link.match_type === selectedMatchType);
-    }
+    // 5. Keep only links connecting valid nodes (or connecting valid nodes to active Battle nodes)
+    const validNodeIds = new Set(nodes.map(n => n.id));
+    const activeBattleIds = new Set(Object.keys(battleHubs));
 
-    if (selectedFormat !== 'All') {
-      links = links.filter(link => link.match_format === selectedFormat);
-    }
+    links = links.filter(link => {
+      const sId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      const isSourceValid = validNodeIds.has(sId) || activeBattleIds.has(sId);
+      const isTargetValid = validNodeIds.has(tId) || activeBattleIds.has(tId);
+      return isSourceValid && isTargetValid;
+    });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const linkInvolves = (link: any, nodeId: string) =>
-      (typeof link.source === 'object' ? link.source.id : link.source) === nodeId ||
-      (typeof link.target === 'object' ? link.target.id : link.target) === nodeId;
+    // 6. Prune Teams and MEMBER_OF links if the team has no active battles
+    const activeTeamIds = new Set<string>();
+    links.forEach(link => {
+      if (link.type !== 'MEMBER_OF') {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        if (sId.startsWith('team_')) activeTeamIds.add(sId);
+        if (tId.startsWith('team_')) activeTeamIds.add(tId);
+      }
+    });
 
-    nodes = nodes.filter(node =>
-      links.some(link => linkInvolves(link, node.id))
-    );
+    // Prune MEMBER_OF links whose team has no active battles
+    links = links.filter(link => {
+      if (link.type === 'MEMBER_OF') {
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        return activeTeamIds.has(tId);
+      }
+      return true;
+    });
+
+    // Prune Team nodes and Emcees that have no active links
+    nodes = nodes.filter(node => {
+      if (node.group === 'Team') {
+        return activeTeamIds.has(node.id);
+      }
+      return links.some(link => {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        return sId === node.id || tId === node.id;
+      });
+    });
+
+    // 7. Inject Battle nodes into the nodes array
+    Object.values(battleHubs).forEach(rumble => {
+      const battleNodeName = getBattleName(rumble);
+      nodes.push({
+        id: rumble.id,
+        name: battleNodeName,
+        group: 'Battle',
+        val: 3.5,
+        total_views: rumble.view_count,
+        hometown: null,
+        avatar_url: null
+      });
+    });
 
     return { nodes, links };
-  }, [graphData, selectedYear, selectedMatchType, selectedFormat]);
+  }, [graphData, selectedYear, selectedMatchType, selectedFormats]);
 
   const nodeStats = useMemo(() => {
     const stats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }> = {};
-
-    // Initialize stats
-    displayData.nodes.forEach(node => {
-      stats[node.id] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 };
-    });
+    displayData.nodes.forEach(node => { stats[node.id] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 }; });
 
     displayData.links.forEach(link => {
+      if (link.type === 'MEMBER_OF') return;
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
 
@@ -139,63 +283,62 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       if (!stats[targetId]) stats[targetId] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 };
 
       if (link.type === 'DEFEATED') {
-        stats[sourceId].wins += 1;
-        stats[targetId].losses += 1;
-        stats[sourceId].total += 1;
-        stats[targetId].total += 1;
+        stats[sourceId].wins += 1; stats[targetId].losses += 1;
+        stats[sourceId].total += 1; stats[targetId].total += 1;
       } else if (link.type === 'BATTLED') {
-        stats[sourceId].draws += 1;
-        stats[targetId].draws += 1;
-        stats[sourceId].total += 1;
-        stats[targetId].total += 1;
+        stats[sourceId].draws += 1; stats[targetId].draws += 1;
+        stats[sourceId].total += 1; stats[targetId].total += 1;
       }
     });
 
-    Object.values(stats).forEach(stat => {
-      if (stat.total > 0) {
-        stat.winRate = stat.wins / stat.total;
-      }
-    });
-
+    Object.values(stats).forEach(stat => { if (stat.total > 0) stat.winRate = stat.wins / stat.total; });
     return stats;
   }, [displayData]);
 
   const filteredEmceesList = useMemo(() => {
-    let emcees = displayData.nodes.filter(n => n.group === 'Emcee');
-
+    let emcees = displayData.nodes.filter(n => n.group === 'Emcee' || n.group === 'Team');
     emcees = [...emcees].sort((a, b) => {
-      if (sortBy === 'name') {
-        return a.name.localeCompare(b.name);
-      }
-      if (sortBy === 'winRate') {
-        const rateA = nodeStats[a.id]?.winRate ?? 0;
-        const rateB = nodeStats[b.id]?.winRate ?? 0;
-        return rateB - rateA;
-      }
-      if (sortBy === 'views') {
-        const viewsA = a.total_views ?? 0;
-        const viewsB = b.total_views ?? 0;
-        return viewsB - viewsA;
-      }
-      if (sortBy === 'wins') {
-        const winsA = nodeStats[a.id]?.wins ?? 0;
-        const winsB = nodeStats[b.id]?.wins ?? 0;
-        return winsB - winsA;
-      }
-      if (sortBy === 'losses') {
-        const lossesA = nodeStats[a.id]?.losses ?? 0;
-        const lossesB = nodeStats[b.id]?.losses ?? 0;
-        return lossesB - lossesA;
-      }
+      if (sortBy === 'name') return a.name.localeCompare(b.name);
+      if (sortBy === 'winRate') return (nodeStats[b.id]?.winRate ?? 0) - (nodeStats[a.id]?.winRate ?? 0);
+      if (sortBy === 'views') return (b.total_views ?? 0) - (a.total_views ?? 0);
+      if (sortBy === 'wins') return (nodeStats[b.id]?.wins ?? 0) - (nodeStats[a.id]?.wins ?? 0);
+      if (sortBy === 'losses') return (nodeStats[b.id]?.losses ?? 0) - (nodeStats[a.id]?.losses ?? 0);
       return 0;
     });
 
-    if (searchQuery) {
-      const q = searchQuery.toLowerCase();
-      emcees = emcees.filter(n => n.name.toLowerCase().includes(q));
-    }
+    if (searchQuery) emcees = emcees.filter(n => n.name.toLowerCase().includes(searchQuery.toLowerCase()));
     return emcees;
   }, [displayData.nodes, searchQuery, sortBy, nodeStats]);
+
+  const selectedNode = useMemo(() => {
+    if (!selectedNodeId) return null;
+    return displayData.nodes.find(n => n.id === selectedNodeId) || null;
+  }, [selectedNodeId, displayData.nodes]);
+
+  const battleParticipants = useMemo(() => {
+    let battleId: string | null = null;
+    if (selectedLink && selectedLink.battle_id) {
+      battleId = selectedLink.battle_id;
+    } else if (selectedNode && selectedNode.group === 'Battle') {
+      battleId = selectedNode.id;
+    }
+
+    if (!battleId) return [];
+
+    const siblingLinks = displayData.links.filter(
+      link => link.battle_id === battleId
+    );
+
+    const participantIds = new Set<string>();
+    siblingLinks.forEach(link => {
+      const sId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      if (sId !== battleId) participantIds.add(sId);
+      if (tId !== battleId) participantIds.add(tId);
+    });
+
+    return displayData.nodes.filter(node => participantIds.has(node.id));
+  }, [selectedLink, selectedNode, displayData]);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handleSearchSelect = (node: any) => {
@@ -204,40 +347,20 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       setSelectedNodeId(null);
     } else {
       setSelectedNodeId(node.id);
-      if (fgRef.current && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
+      setSelectedLink(null);
+      if (fgRef.current && node.x !== undefined) {
         const distance = 200;
         const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
-        fgRef.current.cameraPosition(
-          { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio },
-          node,
-          1500
-        );
-      } else {
-        // Fallback if simulation hasn't populated coordinates yet
-        setTimeout(() => {
-          if (fgRef.current) {
-            const updatedNode = displayData.nodes.find(n => n.id === node.id);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const un = updatedNode as any;
-            if (un && un.x !== undefined) {
-              const distance = 200;
-              const distRatio = 1 + distance / Math.hypot(un.x, un.y, un.z);
-              fgRef.current.cameraPosition(
-                { x: un.x * distRatio, y: un.y * distRatio, z: un.z * distRatio },
-                un,
-                1500
-              );
-            }
-          }
-        }, 500);
+        fgRef.current.cameraPosition({ x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, node, 1500);
       }
     }
   };
 
-  const getWinRateColor = (rate: number) => {
-    // Map 0 to 0 (Red), 0.5 to 60 (Yellow), 1.0 to 120 (Green)
-    const hue = rate * 120;
-    return `hsl(${Math.round(hue)}, 80%, 50%)`;
+  const formatViews = (views: number | null | undefined) => {
+    if (!views) return '0';
+    if (views >= 1000000) return `${(views / 1000000).toFixed(1)}M`;
+    if (views >= 1000) return `${(views / 1000).toFixed(0)}K`;
+    return views.toLocaleString();
   };
 
   const { highlightNodes, highlightLinks } = useMemo(() => {
@@ -246,119 +369,412 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
 
     if (selectedLink) {
       hLinks.add(selectedLink);
-      const sourceId = typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source;
-      const targetId = typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target;
-      hNodes.add(sourceId);
-      hNodes.add(targetId);
+      hNodes.add(typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source);
+      hNodes.add(typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target);
     } else if (selectedNodeId) {
       hNodes.add(selectedNodeId);
-
       displayData.links.forEach(link => {
         const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
         const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-
-        if (sourceId === selectedNodeId) {
-          hLinks.add(link);
-          hNodes.add(targetId);
-        } else if (targetId === selectedNodeId) {
-          hLinks.add(link);
-          hNodes.add(sourceId);
-        }
+        if (sourceId === selectedNodeId) { hLinks.add(link); hNodes.add(targetId); }
+        else if (targetId === selectedNodeId) { hLinks.add(link); hNodes.add(sourceId); }
       });
     }
 
     return { highlightNodes: hNodes, highlightLinks: hLinks };
   }, [selectedNodeId, selectedLink, displayData]);
 
+  // --- LIVE STATE REF ---
+  // Stores React state purely so the 3D Engine can read it instantly every frame without rebuilding nodes
+  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats });
+  useEffect(() => {
+    graphState.current = { selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats };
+  }, [selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats]);
+
   useEffect(() => {
     if (containerRef.current) {
-      const updateDimensions = () => {
-        setDimensions({
-          width: containerRef.current?.clientWidth || 800,
-          height: containerRef.current?.clientHeight || 600
-        });
-      };
-
+      const updateDimensions = () => setDimensions({ width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
       updateDimensions();
       window.addEventListener('resize', updateDimensions);
-
-      // Auto-fit after data loads or filters
       setTimeout(() => {
         if (fgRef.current) {
-          fgRef.current.d3Force('charge').strength(-30);
-          // Re-heat simulation
+          fgRef.current.d3Force('charge').strength(-40);
           fgRef.current.d3ReheatSimulation();
           fgRef.current.zoomToFit(400);
         }
       }, 500);
-
       return () => window.removeEventListener('resize', updateDimensions);
     }
   }, [displayData]);
 
+  // --- MEMOIZED NODE GENERATOR --- 
+  // Prevents the engine from destroying and rebuilding Canvases on click
+  const handleNodeThreeObject = useCallback((node: any) => {
+    const group = new THREE.Group();
+    const isTeam = node.group === 'Team';
+    const isBattle = node.group === 'Battle';
+
+    // 1. Static Geometry Generation
+    let geometry;
+    if (isTeam) {
+      geometry = new THREE.OctahedronGeometry(1);
+    } else if (isBattle) {
+      geometry = new THREE.DodecahedronGeometry(1);
+    } else {
+      geometry = new THREE.SphereGeometry(1, 16, 16);
+    }
+    const material = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.95 });
+    const mesh = new THREE.Mesh(geometry, material);
+    group.add(mesh);
+
+    const sprite = new SpriteText(node.name);
+    sprite.material.depthWrite = false;
+    sprite.material.depthTest = false;
+    sprite.renderOrder = 999;
+    sprite.backgroundColor = 'rgba(18, 18, 18, 0.75)';
+    sprite.padding = 2;
+    sprite.borderRadius = 0;
+    group.add(sprite);
+
+    // 2. High-Performance Render Loop
+    // Reads directly from the live ref every frame (0ms lag, no recreation)
+    mesh.onBeforeRender = (renderer, scene, camera) => {
+      const state = graphState.current;
+      const hasSelection = state.selectedNodeId !== null || state.selectedLink !== null;
+      const isCenter = state.selectedNodeId === node.id;
+      const isHighlighted = state.highlightNodes.has(node.id);
+
+      // --- Sizing ---
+      let baseVal = 1.5;
+      if (isBattle) {
+        baseVal = 2 + (Math.sqrt(node.total_views || 0) * 0.004);
+      } else if (state.sizeBasis === 'battles') {
+        baseVal = 2 + ((state.nodeStats[node.id]?.total || 0) * 0.4);
+      } else {
+        baseVal = 1.5 + (Math.sqrt(node.total_views || 0) * 0.004);
+      }
+      if (isTeam) baseVal *= 3.5;
+      if (isBattle) baseVal *= 2.0;
+      baseVal = Math.pow(baseVal, 1.8) * 0.02;
+      baseVal = Math.max(0.1, baseVal);
+
+      if (state.selectedNodeId) {
+        if (isCenter) baseVal *= 2.5;
+        if (isHighlighted) baseVal *= 1.8;
+      }
+
+      const baseSize = Math.cbrt(baseVal) * 4;
+      const targetScale = isTeam ? baseSize * 1.5 : isBattle ? baseSize * 1.25 : baseSize;
+
+      if (mesh.userData.currentScale !== targetScale) {
+        mesh.scale.set(targetScale, targetScale, targetScale);
+        mesh.userData.currentScale = targetScale;
+      }
+
+      // --- Coloring ---
+      let targetColorStr = '#888888';
+      if (isBattle) {
+        if (state.selectedNodeId && !isCenter && !isHighlighted) {
+          targetColorStr = '#333333';
+        } else {
+          targetColorStr = '#eab308'; // Gold for Battle Hubs
+        }
+      } else if (state.selectedNodeId) {
+        if (isCenter) targetColorStr = '#FFFFFF';
+        else if (!isHighlighted) targetColorStr = '#333333';
+        else targetColorStr = getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5);
+      } else {
+        targetColorStr = getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5);
+      }
+
+      if (mesh.userData.currentColor !== targetColorStr) {
+        (mesh.material as THREE.MeshLambertMaterial).color.set(targetColorStr);
+        mesh.userData.currentColor = targetColorStr;
+      }
+
+      // --- Text Visibility & Fading ---
+      if (!state.showLabels) {
+        sprite.visible = false;
+        return;
+      }
+
+      const nodeHeight = targetScale;
+
+      if (hasSelection) {
+        if (isHighlighted) {
+          sprite.visible = true;
+          sprite.material.opacity = 1;
+
+          const isPrimary = isCenter || state.selectedLink !== null;
+          const tgtColor = isPrimary ? '#FFFFFF' : '#A3A3A3';
+          const tgtHeight = isPrimary ? 5 : 3.5;
+
+          if (sprite.color !== tgtColor) sprite.color = tgtColor;
+          if (sprite.textHeight !== tgtHeight) sprite.textHeight = tgtHeight;
+          sprite.position.set(0, nodeHeight + (isPrimary ? 4 : 2), 0);
+        } else {
+          // Strictly hides all non-selected/non-connected nodes instantly
+          sprite.visible = false;
+        }
+      } else {
+        // Camera Distance logic using ultra-fast Squared Distance
+        const distSq = camera.position.distanceToSquared(group.position);
+        const VIS_DIST = 180;
+        const FADE_DIST = 60;
+        const VIS_DIST_SQ = VIS_DIST * VIS_DIST;
+
+        if (distSq < VIS_DIST_SQ) {
+          sprite.visible = true;
+
+          const tgtColor = 'rgba(255, 255, 255, 0.7)';
+          const tgtHeight = 2.5;
+          if (sprite.color !== tgtColor) sprite.color = tgtColor;
+          if (sprite.textHeight !== tgtHeight) sprite.textHeight = tgtHeight;
+          sprite.position.set(0, nodeHeight + 2, 0);
+
+          const dist = Math.sqrt(distSq);
+          let opacity = 1;
+          if (dist > (VIS_DIST - FADE_DIST)) {
+            opacity = (VIS_DIST - dist) / FADE_DIST;
+          }
+          sprite.material.opacity = opacity;
+        } else {
+          sprite.visible = false;
+        }
+      }
+    };
+
+    return group;
+  }, []);
+
+  const emptyNodeLabel = useCallback(() => '', []);
+
   return (
     <div ref={containerRef} className="w-full h-full relative group font-sans">
-      {/* Mobile Menu FAB */}
-      <button
-        onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-        className="md:hidden absolute bottom-6 left-6 z-[60] w-10 h-10 rounded-md bg-[#121212]/30 backdrop-blur-md border border-white/5 flex items-center justify-center text-[#EFEFEF] opacity-60 hover:opacity-100 pointer-events-auto transition-all"
-      >
-        {isMobileMenuOpen ? (
-          <span className="text-xl">✕</span>
-        ) : (
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
-        )}
+
+      {/* Node Details Overlay */}
+      {selectedNode && !selectedLink && (
+        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#121212]/80 backdrop-blur-md border border-white/10 rounded-lg p-4 text-[#EFEFEF] shadow-xl pointer-events-auto transition-all">
+          <button onClick={() => setSelectedNodeId(null)} className="absolute top-3 right-3 text-white/50 hover:text-white transition-colors">✕</button>
+
+          <div className="flex items-center gap-3 mb-3">
+            {selectedNode.avatar_url ? (
+              <img src={selectedNode.avatar_url} alt="" className="w-12 h-12 rounded-full object-cover border border-white/10" />
+            ) : (
+              <div className={`w-12 h-12 bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold ${
+                selectedNode.group === 'Team' ? 'rounded-md' : selectedNode.group === 'Battle' ? 'rounded-lg text-[#eab308]' : 'rounded-full'
+              }`}>
+                {selectedNode.group === 'Battle' ? '⚔️' : selectedNode.name.charAt(0)}
+              </div>
+            )}
+            <div>
+              <h3 className="font-bold text-base leading-tight pr-4">{selectedNode.name}</h3>
+              <span className="text-[10px] uppercase tracking-wider text-[#0ea5e9] font-semibold">{selectedNode.group}</span>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs text-[#A3A3A3] mb-3">
+            {selectedNode.hometown && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Hometown</span>{selectedNode.hometown}</div>}
+            {selectedNode.total_views != null && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Total Views</span>{selectedNode.total_views.toLocaleString()}</div>}
+          </div>
+
+          {nodeStats[selectedNode.id] && (
+            <div className="bg-white/5 rounded-md p-2 flex justify-between text-center text-xs border border-white/5">
+              <div><span className="block text-[#4ade80] font-bold">{nodeStats[selectedNode.id].wins}</span><span className="text-[9px] text-[#666] uppercase">Wins</span></div>
+              <div><span className="block text-[#f87171] font-bold">{nodeStats[selectedNode.id].losses}</span><span className="text-[9px] text-[#666] uppercase">Losses</span></div>
+              <div><span className="block text-[#A3A3A3] font-bold">{nodeStats[selectedNode.id].draws}</span><span className="text-[9px] text-[#666] uppercase">Draws</span></div>
+              <div><span className="block text-[#EFEFEF] font-bold">{((nodeStats[selectedNode.id].winRate || 0) * 100).toFixed(0)}%</span><span className="text-[9px] text-[#666] uppercase">Win Rate</span></div>
+            </div>
+          )}
+
+          {selectedNode.group === 'Battle' && battleParticipants.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-white/5">
+              <span className="block text-[9px] uppercase tracking-wider text-[#666] mb-1.5">Participants</span>
+              <div className="flex flex-wrap gap-1">
+                {battleParticipants.map(p => {
+                  const winsLink = displayData.links.find(
+                    l => l.battle_id === selectedNode.id && l.type === 'WON'
+                  );
+                  const winnerId = winsLink ? (typeof winsLink.source === 'object' ? winsLink.source.id : winsLink.source) : null;
+                  const isWinner = p.id === winnerId;
+                  
+                  return (
+                    <div
+                      key={p.id}
+                      className={`text-[10px] px-2 py-0.5 rounded border flex items-center gap-1 ${
+                        isWinner
+                          ? 'bg-green-950/30 border-green-500/30 text-green-400 font-semibold shadow-sm'
+                          : 'bg-white/5 border-white/5 text-[#A3A3A3]'
+                      }`}
+                    >
+                      {isWinner && <span>🏆</span>}
+                      <span>{p.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Link Details Overlay */}
+      {selectedLink && (
+        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#121212]/80 backdrop-blur-md border border-white/10 rounded-lg p-4 text-[#EFEFEF] shadow-xl pointer-events-auto transition-all">
+          <button onClick={() => setSelectedLink(null)} className="absolute top-3 right-3 text-white/50 hover:text-white transition-colors">✕</button>
+
+          <div className="text-[10px] uppercase tracking-wider text-[#0ea5e9] font-semibold mb-2">Connection Details</div>
+
+          <div className="flex flex-col gap-1 mb-4 text-sm bg-white/5 p-2 rounded-md border border-white/5">
+            <div className="flex justify-between items-center text-center">
+              <span className={`font-bold flex-1 truncate ${selectedLink.type === 'WON' ? 'text-[#4ade80]' : ''}`}>
+                {selectedLink.source.name || selectedLink.source}
+              </span>
+              <span className="text-[10px] text-[#888] px-2 whitespace-nowrap">
+                {selectedLink.type === 'DEFEATED' ? '🏆 DEFEATED' :
+                 selectedLink.type === 'WON' ? '🏆 WON' :
+                 selectedLink.type === 'LOST' ? '❌ LOST' :
+                 selectedLink.type === 'PARTICIPATED_IN' ? '⚔️ PARTICIPATED IN' :
+                 selectedLink.type === 'BATTLED' ? '⚔️ BATTLED' : 'MEMBER OF'}
+              </span>
+              <span className={`font-bold flex-1 truncate ${
+                selectedLink.type === 'DEFEATED' || selectedLink.type === 'LOST' ? 'text-[#f87171]' : ''
+              }`}>
+                {selectedLink.target.name || selectedLink.target}
+              </span>
+            </div>
+          </div>
+
+          {selectedLink.type !== 'MEMBER_OF' && (
+            <div className="space-y-3 text-xs text-[#A3A3A3]">
+              {selectedLink.battle_name && (
+                <div>
+                  <span className="block text-[9px] uppercase tracking-wider text-[#666]">Battle Name</span>
+                  <span className="text-white font-medium">{selectedLink.battle_name}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-y-3 gap-x-2">
+                {selectedLink.event_name && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Event</span><span className="text-[#EFEFEF]">{selectedLink.event_name} {selectedLink.year ? `('${String(selectedLink.year).slice(-2)})` : ''}</span></div>}
+                {selectedLink.match_format && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Format</span><span className="text-[#EFEFEF]">{FORMAT_LABELS[selectedLink.match_format] || selectedLink.match_format}</span></div>}
+                {selectedLink.match_type && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Type</span><span className="text-[#EFEFEF]">{MATCH_TYPE_LABELS[selectedLink.match_type] || selectedLink.match_type}</span></div>}
+                {selectedLink.view_count != null && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Views</span><span className="text-[#EFEFEF]">{formatViews(selectedLink.view_count)}</span></div>}
+              </div>
+              {battleParticipants.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/5">
+                  <span className="block text-[9px] uppercase tracking-wider text-[#666] mb-1.5">Participants</span>
+                  <div className="flex flex-wrap gap-1">
+                    {battleParticipants.map(p => {
+                      const winsLink = displayData.links.find(
+                        l => l.battle_id === selectedLink.battle_id && l.type === 'WON'
+                      );
+                      const winnerId = winsLink
+                        ? (typeof winsLink.source === 'object' ? winsLink.source.id : winsLink.source)
+                        : (selectedLink.type === 'DEFEATED'
+                          ? (typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source)
+                          : null);
+                      const isWinner = p.id === winnerId;
+                      return (
+                        <div
+                          key={p.id}
+                          className={`text-[10px] px-2 py-0.5 rounded border flex items-center gap-1 ${
+                            isWinner
+                              ? 'bg-green-950/30 border-green-500/30 text-green-400 font-semibold shadow-sm'
+                              : 'bg-white/5 border-white/5 text-[#A3A3A3]'
+                          }`}
+                        >
+                          {isWinner && <span>🏆</span>}
+                          <span>{p.name}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden absolute bottom-6 left-6 z-[60] w-10 h-10 rounded-md bg-[#121212]/30 backdrop-blur-md border border-white/5 flex items-center justify-center text-[#EFEFEF] opacity-60 hover:opacity-100 transition-all">
+        {isMobileMenuOpen ? <span className="text-xl">✕</span> : <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>}
       </button>
 
-      <div className={`absolute z-[55] flex flex-col gap-2 transition-all duration-300 w-64 pointer-events-auto md:top-4 md:right-4 md:bottom-auto md:left-auto md:opacity-80 group-hover:md:opacity-100 md:translate-y-0 ${isMobileMenuOpen ? 'max-md:bottom-20 max-md:left-6 max-md:opacity-100 max-md:translate-y-0 max-md:max-h-[60dvh] max-md:overflow-y-auto custom-scrollbar' : 'max-md:bottom-20 max-md:left-6 max-md:opacity-0 max-md:pointer-events-none max-md:translate-y-4'}`}>
+      {/* Control Panel */}
+      <div className={`absolute z-[55] flex flex-col gap-2 transition-all w-64 pointer-events-auto md:top-4 md:right-4 ${isMobileMenuOpen ? 'bottom-20 left-6 opacity-100' : 'max-md:opacity-0 max-md:pointer-events-none'}`}>
+
+        <div ref={dropdownRef} className="flex bg-[#121212]/40 border border-white/10 rounded-md p-1 backdrop-blur-md items-center justify-between relative">
+          <div className="relative w-full flex-1">
+            <button
+              onClick={() => setIsFormatDropdownOpen(!isFormatDropdownOpen)}
+              className="w-full text-left bg-transparent text-[#A3A3A3] text-[10px] uppercase tracking-wider font-semibold py-1.5 px-2 rounded-sm hover:text-white hover:bg-white/5 flex justify-between items-center transition-all duration-200"
+            >
+              <span>Matchup Formats ({selectedFormats.length})</span>
+              <svg className={`w-3 h-3 transition-transform duration-200 ${isFormatDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+
+            {isFormatDropdownOpen && (
+              <div className="absolute left-0 right-0 mt-2 z-[70] bg-[#121212]/95 backdrop-blur-md border border-white/10 rounded-md p-2 flex flex-col gap-1.5 shadow-2xl max-h-48 overflow-y-auto">
+                {Object.keys(FORMAT_LABELS).map(formatKey => {
+                  const label = FORMAT_LABELS[formatKey];
+                  const isChecked = selectedFormats.includes(formatKey);
+                  return (
+                    <label key={formatKey} className="flex items-center gap-2.5 text-xs text-[#A3A3A3] hover:text-white cursor-pointer select-none py-1 px-1.5 rounded-sm hover:bg-white/5 transition-all">
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => {
+                          if (isChecked) {
+                            setSelectedFormats(selectedFormats.filter(f => f !== formatKey));
+                          } else {
+                            setSelectedFormats([...selectedFormats, formatKey]);
+                          }
+                        }}
+                        className="accent-[#0ea5e9] rounded border-white/10 bg-white/5 w-3.5 h-3.5"
+                      />
+                      <span>{label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setShowLabels(!showLabels)}
+            title={showLabels ? "Hide Node Labels" : "Show Node Labels"}
+            className="ml-1 p-1.5 text-[#888] hover:text-white hover:bg-white/10 rounded-sm transition-all flex items-center justify-center shrink-0"
+          >
+            {showLabels ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" /><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" /><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" /><line x1="2" y1="2" x2="22" y2="22" /></svg>
+            )}
+          </button>
+        </div>
 
         <div className='flex gap-2'>
-          <select
-            id="year-select"
-            value={selectedYear}
-            onChange={(e) => setSelectedYear(e.target.value)}
-            className="bg-[#121212]/30 backdrop-blur-md text-[#A3A3A3] hover:text-[#EFEFEF] border border-white/5 rounded-md px-3 py-2 text-xs outline-none focus:border-white/20 transition-all w-32 cursor-pointer"
-          >
+          <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs w-32 outline-none">
             <option value="All">All Years</option>
-            {availableYears.map(y => (
-              <option key={y} value={y}>{y}</option>
-            ))}
+            {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-
-          <select
-            id="type-select"
-            value={selectedMatchType}
-            onChange={(e) => setSelectedMatchType(e.target.value)}
-            className="bg-[#121212]/30 backdrop-blur-md text-[#A3A3A3] hover:text-[#EFEFEF] border border-white/5 rounded-md px-3 py-2 text-xs outline-none focus:border-white/20 transition-all w-32 cursor-pointer"
-          >
+          <select value={selectedMatchType} onChange={(e) => setSelectedMatchType(e.target.value)} className="bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs w-32 outline-none">
             <option value="All">All Types</option>
-            {availableMatchTypes.map(t => (
-              <option key={t} value={t}>{MATCH_TYPE_LABELS[t] || t}</option>
-            ))}
+            {availableMatchTypes.map(t => <option key={t} value={t}>{MATCH_TYPE_LABELS[t] || t}</option>)}
           </select>
         </div>
-        {/* Search Bar */}
-        <div className="relative w-full">
-          <input
-            type="text"
-            placeholder="Search Emcee..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-[#121212]/30 backdrop-blur-md text-[#A3A3A3] focus:text-[#EFEFEF] border border-white/5 rounded-md px-3 py-2 text-xs outline-none focus:border-white/20 focus:bg-white/[0.04] placeholder-[#555] transition-all"
-          />
-        </div>
 
+        <select value={sizeBasis} onChange={(e) => setSizeBasis(e.target.value as 'battles' | 'views')} className="w-full bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs outline-none hover:text-[#EFEFEF] transition-colors">
+          <option value="battles">Node Size: Total Battles</option>
+          <option value="views">Node Size: Total Views</option>
+        </select>
 
+        <input type="text" placeholder="Search Emcee or Team..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs outline-none" />
 
-        {/* Scrollable Emcees List */}
-        <div className="bg-[#121212]/20 backdrop-blur-md border border-white/5 rounded-md flex flex-col overflow-hidden max-h-[300px]">
-          <div className="px-3 py-1.5 border-b border-white/5 flex justify-between items-center bg-transparent shrink-0">
-            <span className="text-xs text-[#A3A3A3] uppercase tracking-wider font-semibold">Emcees ({filteredEmceesList.length})</span>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
-              className="bg-transparent text-[#A3A3A3] border border-white/5 rounded-md px-2 py-0.5 text-[10px] outline-none focus:border-white/20 w-24 hover:text-[#EFEFEF] transition-colors cursor-pointer"
-            >
+        <div className="bg-[#121212]/20 border border-white/5 rounded-md flex flex-col max-h-[300px]">
+          <div className="px-3 py-1.5 border-b border-white/5 flex justify-between items-center shrink-0">
+            <span className="text-xs text-[#A3A3A3] font-semibold">Combatants ({filteredEmceesList.length})</span>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-transparent text-[#A3A3A3] border border-white/5 rounded-md px-2 py-0.5 text-[10px] w-24 outline-none">
               <option value="name">Sort: Name</option>
               <option value="winRate">Sort: Win Rate</option>
               <option value="views">Sort: Views</option>
@@ -366,571 +782,138 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
               <option value="losses">Sort: Losses</option>
             </select>
           </div>
-          <div className="overflow-y-auto flex-1 divide-y divide-white/[0.03] scrollbar-thin">
-            {filteredEmceesList.length === 0 ? (
-              <div className="p-3 text-xs text-[#555] text-center">No emcees found</div>
-            ) : (
-              filteredEmceesList.map(emcee => {
-                const isSelected = selectedNodeId === emcee.id;
-                const rate = nodeStats[emcee.id]?.winRate ?? 0.5;
-                const wins = nodeStats[emcee.id]?.wins ?? 0;
-                const losses = nodeStats[emcee.id]?.losses ?? 0;
-                const views = emcee.total_views ?? 0;
-                const hasAvatar = !!emcee.avatar_url;
-
-                let metricLabel = '';
-                let metricStyle = {};
-
-                if (sortBy === 'winRate' || sortBy === 'name') {
-                  metricLabel = `${(rate * 100).toFixed(0)}% WR`;
-                  metricStyle = { color: getWinRateColor(rate) };
-                } else if (sortBy === 'views') {
-                  metricLabel = views >= 1000000
-                    ? `${(views / 1000000).toFixed(1)}M v`
-                    : views >= 1000
-                      ? `${(views / 1000).toFixed(0)}K v`
-                      : `${views} v`;
-                  metricStyle = { color: '#A3A3A3' };
-                } else if (sortBy === 'wins') {
-                  metricLabel = `${wins} W`;
-                  metricStyle = { color: '#4ade80' };
-                } else if (sortBy === 'losses') {
-                  metricLabel = `${losses} L`;
-                  metricStyle = { color: '#f87171' };
-                }
-
-                return (
-                  <button
-                    key={emcee.id}
-                    onClick={() => handleSearchSelect(emcee)}
-                    className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors ${isSelected ? 'bg-white/[0.07] text-[#EFEFEF]' : 'text-[#A3A3A3] hover:bg-white/[0.03] hover:text-[#EFEFEF]'
-                      }`}
-                  >
-                    {hasAvatar ? (
-                      <Image
-                        src={emcee.avatar_url!}
-                        alt={emcee.name}
-                        width={20}
-                        height={20}
-                        className="w-5 h-5 rounded-full object-cover shrink-0 border border-white/5 shadow-sm"
-                      />
-                    ) : (
-                      <div className="w-5 h-5 rounded-full bg-white/[0.05] border border-white/5 flex items-center justify-center text-[9px] text-[#A3A3A3] font-bold shrink-0 font-mono">
-                        {emcee.name.charAt(0).toUpperCase()}
-                      </div>
-                    )}
-                    <span className="truncate flex-1 font-medium">{emcee.name}</span>
-                    <span className="font-mono text-[10px] shrink-0" style={metricStyle}>
-                      {metricLabel}
-                    </span>
-                  </button>
-                );
-              })
-            )}
+          <div className="overflow-y-auto flex-1 divide-y divide-white/[0.03]">
+            {filteredEmceesList.map(node => {
+              const rate = nodeStats[node.id]?.winRate ?? 0.5;
+              const metricStyle = sortBy === 'winRate' || sortBy === 'name' ? { color: getWinRateColor(rate) } : { color: '#A3A3A3' };
+              return (
+                <button key={node.id} onClick={() => handleSearchSelect(node)} className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${selectedNodeId === node.id ? 'bg-white/[0.07] text-[#EFEFEF]' : 'text-[#A3A3A3] hover:bg-white/[0.03]'}`}>
+                  {node.avatar_url ? (
+                    <Image src={node.avatar_url} alt={node.name} width={20} height={20} className="w-5 h-5 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className={`w-5 h-5 bg-white/[0.05] border border-white/5 flex items-center justify-center text-[9px] shrink-0 ${node.group === 'Team' ? 'rounded-md' : 'rounded-full'}`}>
+                      {node.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="truncate flex-1 font-medium">{node.group === 'Team' ? `[Team] ${node.name}` : node.name}</span>
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {displayData.nodes.length === 0 ? (
-        <div className="absolute inset-0 flex items-center justify-center text-[#707070]">
-          {selectedYear === 'All' && selectedMatchType === 'All' && selectedFormat === 'All'
-            ? 'No graph data found. Did you sync Emcees and Battles from Supabase?'
-            : 'No battles found for the selected filters.'}
+      {/* Map Legend */}
+      <div className="absolute bottom-6 left-6 z-[55] pointer-events-none hidden md:flex flex-col gap-3 bg-[#121212]/30 backdrop-blur-md border border-white/5 rounded-md p-3">
+        <span className="text-[10px] text-[#A3A3A3] uppercase tracking-wider font-semibold">Legend</span>
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[10px] text-[#888]">Win Rate</span>
+          <div className="w-full h-1.5 rounded-full bg-gradient-to-r from-[#f87171] via-[#facc15] to-[#4ade80]"></div>
+          <div className="flex justify-between text-[9px] text-[#666]">
+            <span>Low</span><span>Avg</span><span>High</span>
+          </div>
         </div>
-      ) : (
-        <ForceGraph3D
-          ref={fgRef}
-          width={dimensions.width}
-          height={dimensions.height}
-          graphData={displayData}
-          nodeLabel="name"
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          nodeVal={(node: any) => {
-            let baseVal = 1.5;
-            if (node.group === 'Emcee') {
-              if (sizeBasis === 'battles') {
-                const totalBattles = nodeStats[node.id]?.total || 0;
-                baseVal = 2 + (totalBattles * 0.4);
-              } else {
-                const views = node.total_views || 0;
-                baseVal = 1.5 + (Math.sqrt(views) * 0.004);
-              }
-            }
 
-            // Exaggerate differences: make 1-battle nodes tiny, but heavily scale up veterans
-            baseVal = Math.pow(baseVal, 1.8) * 0.02;
-            // Ensure a minimum visibility size
-            baseVal = Math.max(0.1, baseVal);
-            if (selectedNodeId || selectedLink) {
-              if (node.id === selectedNodeId) return baseVal * 2.5;
-              if (highlightNodes.has(node.id)) return baseVal * 1.8;
-            }
-            return baseVal;
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          nodeColor={(node: any) => {
-            if (selectedNodeId || selectedLink) {
-              if (node.id === selectedNodeId) return '#FFFFFF';
-              if (!highlightNodes.has(node.id)) return '#333333'; // Dimmed
-            }
-            if (node.group === 'Emcee') {
-              const rate = nodeStats[node.id]?.winRate ?? 0.5;
-              return getWinRateColor(rate);
-            }
-            return '#888888';
-          }}
-          nodeRelSize={4}
-          nodeResolution={16}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkColor={(link: any) => {
-            if (selectedNodeId || selectedLink) {
-              if (highlightLinks.has(link)) {
-                if (link.type === 'DEFEATED') {
-                  const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-                  const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-                  if (selectedNodeId) {
-                    if (sourceId === selectedNodeId) return '#4ade80'; // Win
-                    if (targetId === selectedNodeId) return '#f87171'; // Loss
-                  } else if (selectedLink) {
-                    return '#4ade80'; // Highlight victory direction
-                  }
-                }
-                return '#FFFFFF';
-              }
-              return '#1a1a1a'; // Dimmed
-            }
-            if (link.match_type === 'tournament') return '#b59210'; // Darker metallic gold
-            if (link.match_type === 'promo') return '#be185d'; // Darker magenta
-            if (link.match_type === 'tryout') return '#0369a1'; // Darker blue
-            if (link.type === 'DEFEATED') return '#4a5568'; // Slate grey
-            return '#555555';
-          }}
-          linkOpacity={0.6}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkWidth={(link: any) => {
-            let baseWidth = .6; // Slightly thicker default link width
-            if (link.type === 'DEFEATED' || link.type === 'BATTLED') {
-              if (['2v2', '3v3', '5v5'].includes(link.match_format)) baseWidth = 1.4;
-            }
+        <div className="flex flex-col gap-1.5 mt-1">
+          <div className="flex items-center gap-2 text-[10px] text-[#888]">
+            <div className="w-2 h-2 rounded-full border border-white/20"></div> Individual Emcee
+          </div>
+          {selectedFormats.some(f => f !== '1v1') && (
+            <>
+              <div className="flex items-center gap-2 text-[10px] text-[#888]">
+                <div className="w-2 h-2 rounded-sm border border-white/20"></div> Team
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-[#888]">
+                <div className="w-3 h-0.5 bg-[#0ea5e9]"></div> Member Of Team
+              </div>
+              <div className="flex items-center gap-2 text-[10px] text-[#888]">
+                <div className="w-3 h-0.5 bg-[#8b5cf6]"></div> Multi-Participant (2v2, 3way, etc.)
+              </div>
+            </>
+          )}
+          <div className="flex items-center gap-2 text-[10px] text-[#888]">
+            <div className="w-3 h-0.5 bg-[#b59210]"></div> Tournament Battle
+          </div>
+          {(selectedFormats.includes('royal_rumble') || selectedFormats.includes('3way')) && (
+            <div className="flex items-center gap-2 text-[10px] text-[#888]">
+              <div className="w-2.5 h-2.5 bg-[#eab308] border border-[#eab308]/20 rounded-[3px] rotate-45 shrink-0"></div> Royal Rumble / 3-Way Battle
+            </div>
+          )}
+        </div>
+      </div>
 
-            if (selectedNodeId || selectedLink) {
-              if (highlightLinks.has(link)) return baseWidth * 1.2;
-              return 0.05; // Very thin for dimmed links
-            }
-            return baseWidth;
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkDirectionalArrowLength={(link: any) => link.type === 'DEFEATED' ? 4 : 0}
-          linkDirectionalArrowRelPos={1}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkDirectionalParticles={(link: any) => {
-            if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
-              return 4;
-            }
-            return 0;
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkDirectionalParticleSpeed={(link: any) => {
-            if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
-              return -0.003; // Negative speed reverses flow (In for win, Out for defeat)
-            }
-            if (link.match_type === 'tournament') return 0.008;
-            if (link.match_format === 'royal_rumble') return 0.012;
-            return 0.004;
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkDirectionalParticleWidth={(link: any) => {
-            if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
-              return 1.8; // Subtle particles for highlighted links
-            }
-            if (link.match_type === 'tournament') return 1.8;
-            if (['2v2', '3v3', '5v5'].includes(link.match_format)) return 1.5;
-            if (link.match_format === 'royal_rumble') return 1.2;
-            return 1.0;
-          }}
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          linkDirectionalParticleColor={(link: any) => {
-            if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
+      <ForceGraph3D
+        ref={fgRef}
+        width={dimensions.width}
+        height={dimensions.height}
+        graphData={displayData}
+
+        nodeLabel={emptyNodeLabel}
+
+        onNodeClick={handleSearchSelect}
+        onBackgroundClick={() => {
+          setSelectedNodeId(null);
+          setSelectedLink(null);
+        }}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onLinkClick={(link: any) => {
+          setSelectedLink(link);
+          setSelectedNodeId(null);
+        }}
+
+        nodeThreeObject={handleNodeThreeObject}
+
+        linkColor={(link: any) => {
+          if (selectedNodeId || selectedLink) {
+            if (highlightLinks.has(link)) {
+              if (link.type === 'MEMBER_OF') return '#0ea5e9';
+              if (link.type === 'WON') return '#4ade80';
+              if (link.type === 'LOST') return '#f87171';
               if (link.type === 'DEFEATED') {
                 const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
-                if (selectedNodeId && sourceId === selectedNodeId) return '#4ade80'; // Green (Win)
-                if (selectedNodeId) return '#f87171'; // Red (Defeat)
+                return sourceId === selectedNodeId ? '#4ade80' : '#f87171';
               }
               return '#FFFFFF';
             }
-            if (link.match_type === 'tournament') return '#FFD700';
-            if (link.match_format === 'royal_rumble') return '#FF6B6B';
-            return '#ff4d4d';
-          }}
-          backgroundColor="#0a0a0a"
-          enableNodeDrag={true}
-          onNodeDragEnd={(node: any) => {
-            // Unpin the node after dragging so the physics simulation takes over again
-            node.fx = undefined;
-            node.fy = undefined;
-            node.fz = undefined;
-          }}
-          onNodeClick={(node: any) => {
-            setSelectedLink(null);
-            setSelectedNodeId(node.id === selectedNodeId ? null : node.id);
-            if (fgRef.current) {
-              // Increase distance for a wider field of view when focused
-              const distance = 200;
-              const distRatio = 1 + distance / Math.hypot(node.x, node.y, node.z);
+            return '#1a1a1a';
+          }
 
-              fgRef.current.cameraPosition(
-                { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, // new position
-                node, // lookAt ({ x, y, z })
-                1500  // ms transition duration
-              );
+          if (link.type === 'MEMBER_OF') return 'rgba(14, 165, 233, 0.08)';
+          if (link.type === 'WON') return 'rgba(74, 222, 128, 0.4)';
+          if (link.type === 'LOST') return 'rgba(248, 113, 113, 0.2)';
+          if (link.match_format && link.match_format !== '1v1') return '#8b5cf6';
+          if (link.match_type === 'tournament') return '#b59210';
+          if (link.match_type === 'promo') return '#be185d';
+          return '#4a5568';
+        }}
+        linkOpacity={0.6}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        linkWidth={(link: any) => {
+          if (selectedNodeId || selectedLink) {
+            if (highlightLinks.has(link)) {
+              return link.type === 'MEMBER_OF' ? 0.4 : 1.2;
             }
-          }}
-          onLinkClick={(link: any) => {
-            setSelectedNodeId(null);
-            setSelectedLink(selectedLink === link ? null : link);
-          }}
-          onBackgroundClick={() => { setSelectedNodeId(null); setSelectedLink(null); }}
-          onEngineStop={() => {
-            if (fgRef.current && !selectedNodeId) {
-              fgRef.current.zoomToFit(400);
-            }
-          }}
-        />
-      )}
-
-      {/* Node Details Panel */}
-      {/* {selectedNode && selectedNode.group === 'Emcee' && (
-        // <div className="absolute left-6 top-24 z-20 w-80 bg-[#191919]/95 backdrop-blur-md border border-[#2F2F2F] rounded-md shadow-lg p-5 transition-all duration-300">
-
-        <div className='flex flex-col absolute left-6 top-24 w-40'>
-          {selectedNode.avatar_url ? (
-            <img
-              src={selectedNode.avatar_url}
-              alt={selectedNode.name}
-              className="w-full aspect-2/3 rounded-md object-cover border border-[#2F2F2F]"
-            />
-          ) : (
-            <div className="w-10 h-10 rounded-md border border-[#2F2F2F] bg-[#202020] flex items-center justify-center text-[#A3A3A3] text-sm font-semibold">
-              {selectedNode.name.charAt(0).toUpperCase()}
-            </div>
-          )}
-          <div className="z-20 w-80 backdrop-blur-md border border-[#212121] rounded-md shadow-lg p-4 transition-all duration-300">
-
-            <div className="flex justify-between items-start mb-4">
-              <div className="flex items-center gap-3">
-
-                <h2 className="text-xl font-semibold text-[#EFEFEF] truncate pr-2 tracking-tight">{selectedNode.name}</h2>
-              </div>
-              <button onClick={() => setSelectedNodeId(null)} className="text-[#A3A3A3] hover:text-[#EFEFEF] transition-colors ml-2 flex-shrink-0">
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              {selectedNode.hometown && (
-                <div>
-                  <p className="text-xs text-[#A3A3A3] uppercase tracking-widest mb-1 font-medium">Hometown</p>
-                  <p className="text-sm text-[#EFEFEF]">{selectedNode.hometown}</p>
-                </div>
-              )}
-
-              {selectedNode.total_views != null && (
-                <div>
-                  <p className="text-xs text-[#A3A3A3] uppercase tracking-widest mb-1 font-medium">Total Views</p>
-                  <p className="text-sm text-[#EFEFEF] font-mono">{selectedNode.total_views.toLocaleString()}</p>
-                </div>
-              )}
-
-              <div className="border-t border-[#2F2F2F] pt-4 mt-4">
-                <p className="text-xs text-[#A3A3A3] uppercase tracking-widest mb-3 font-medium">Battle Statistics</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-[#202020] p-3 rounded-md border border-[#2F2F2F]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Matches</p>
-                    <p className="text-lg font-mono text-[#EFEFEF]">{nodeStats[selectedNode.id]?.total || 0}</p>
-                  </div>
-                  <div className="bg-[#202020] p-3 rounded-md border border-[#2F2F2F]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Win Rate</p>
-                    <p className="text-lg font-mono" style={{ color: getWinRateColor(nodeStats[selectedNode.id]?.winRate || 0.5) }}>
-                      {((nodeStats[selectedNode.id]?.winRate || 0) * 100).toFixed(1)}%
-                    </p>
-                  </div>
-                  <div className="bg-[#202020] p-3 rounded-md border border-[#2F2F2F]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Wins</p>
-                    <p className="text-lg font-mono text-[#4ade80]">{nodeStats[selectedNode.id]?.wins || 0}</p>
-                  </div>
-                  <div className="bg-[#202020] p-3 rounded-md border border-[#2F2F2F]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Losses</p>
-                    <p className="text-lg font-mono text-[#f87171]">{nodeStats[selectedNode.id]?.losses || 0}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>)} */}
-
-      {selectedNode && selectedNode.group === 'Emcee' && (
-        <div className="absolute z-[40] bg-[#121212]/95 md:bg-[#121212]/50 backdrop-blur-xl md:backdrop-blur-2xl border-t border-white/10 md:border md:border-white/10 overflow-hidden flex flex-col transition-all duration-300 opacity-100 md:opacity-95 hover:md:opacity-100 max-md:w-full max-md:bottom-0 max-md:left-0 max-md:rounded-t-2xl max-md:rounded-b-none max-md:top-auto max-md:max-h-[35dvh] md:w-80 md:left-6 md:top-24 md:rounded-xl shadow-2xl pb-20 md:pb-0 pointer-events-auto ring-1 ring-white/5">
-
-          {/* Portrait Header */}
-          <div className="relative w-full bg-transparent max-md:p-4 max-md:flex max-md:items-center max-md:gap-4 max-md:border-b max-md:border-white/5 shrink-0">
-            {selectedNode.avatar_url ? (
-              <Image
-                src={selectedNode.avatar_url}
-                alt={selectedNode.name}
-                width={320}
-                height={400}
-                className="object-cover md:w-full md:h-full md:aspect-[4/5] max-md:w-14 max-md:h-14 max-md:rounded-full max-md:border max-md:border-white/10"
-              />
-            ) : (
-              <div className="md:w-full md:h-full md:aspect-[4/5] bg-gradient-to-br from-[#2a2a2a] to-[#0a0a0a] max-md:w-14 max-md:h-14 max-md:rounded-full max-md:border max-md:border-white/10 shrink-0"></div>
-            )}
-
-            {/* Close Button */}
-            <button
-              onClick={() => setSelectedNodeId(null)}
-              className="absolute md:top-4 md:right-4 max-md:top-3 max-md:right-3 w-8 h-8 flex items-center justify-center bg-black/20 hover:bg-black/55 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-sm transition-all z-20"
-            >
-              ✕
-            </button>
-
-            {/* Gradient Overlay & Name */}
-            <div className="md:absolute md:bottom-0 md:left-0 md:w-full md:bg-gradient-to-t md:from-[#121212] md:via-[#121212]/80 md:to-transparent md:pt-24 md:pb-4 md:px-5 flex-1 min-w-0">
-              <h2 className="text-xl md:text-3xl font-bold text-[#EFEFEF] truncate tracking-tight pr-8 drop-shadow-lg">
-                {selectedNode.name}
-              </h2>
-              <p className="text-[10px] md:text-sm text-[#A3A3A3] uppercase tracking-wider font-medium md:mt-1 truncate">
-                {selectedNode.hometown || "Location Unknown"}
-              </p>
-            </div>
-          </div>
-
-          {/* Details Body */}
-          <div className="px-5 pb-5 pt-3 space-y-5">
-            {selectedNode.total_views != null && (
-              <div className="flex justify-between items-end border-b border-white/5 pb-3">
-                <p className="text-xs text-[#A3A3A3] uppercase tracking-widest font-medium">Total Views</p>
-                <p className="text-lg text-[#EFEFEF] font-mono leading-none">{selectedNode.total_views.toLocaleString()}</p>
-              </div>
-            )}
-
-            {/* Battle Statistics */}
-            <div>
-              <p className="text-xs text-[#A3A3A3] uppercase tracking-widest mb-3 font-medium max-md:hidden">Battle Statistics</p>
-              <div className="grid grid-cols-2 gap-2 max-md:hidden">
-                <div className="bg-white/[0.02] p-3 rounded-md border border-white/5 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                  <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Matches</p>
-                  <p className="text-xl font-mono text-[#EFEFEF] mt-1">{nodeStats[selectedNode.id]?.total || 0}</p>
-                </div>
-                <div className="bg-white/[0.02] p-3 rounded-md border border-white/5 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                  <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Win Rate</p>
-                  <p className="text-xl font-mono mt-1" style={{ color: getWinRateColor(nodeStats[selectedNode.id]?.winRate || 0) }}>
-                    {(nodeStats[selectedNode.id]?.winRate * 100).toFixed(1)}%
-                  </p>
-                </div>
-                <div className="bg-white/[0.02] p-3 rounded-md border border-[#22c55e]/15 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                  <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Wins</p>
-                  <p className="text-xl font-mono text-[#4ade80] mt-1">{nodeStats[selectedNode.id]?.wins || 0}</p>
-                </div>
-                <div className="bg-white/[0.02] p-3 rounded-md border border-[#ef4444]/15 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                  <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Losses</p>
-                  <p className="text-xl font-mono text-[#f87171] mt-1">{nodeStats[selectedNode.id]?.losses || 0}</p>
-                </div>
-              </div>
-
-              {/* Compact Mobile Stats */}
-              <div className="md:hidden flex items-center justify-between bg-white/[0.03] border border-white/5 rounded-md px-3 py-2 mt-1">
-                <div className="flex items-center gap-1.5" title="Total Matches">
-                  <span className="text-xs">⚔️</span>
-                  <span className="text-sm font-mono text-[#EFEFEF]">{nodeStats[selectedNode.id]?.total || 0}</span>
-                </div>
-                <div className="flex items-center gap-1.5" title="Wins">
-                  <span className="text-xs">✅</span>
-                  <span className="text-sm font-mono text-[#4ade80]">{nodeStats[selectedNode.id]?.wins || 0}</span>
-                </div>
-                <div className="flex items-center gap-1.5" title="Losses">
-                  <span className="text-xs">❌</span>
-                  <span className="text-sm font-mono text-[#f87171]">{nodeStats[selectedNode.id]?.losses || 0}</span>
-                </div>
-                <div className="flex items-center gap-1.5 border-l border-white/10 pl-3" title="Win Rate">
-                  <span className="text-[10px] text-[#A3A3A3] uppercase tracking-wider font-bold">WR</span>
-                  <span className="text-sm font-mono font-bold" style={{ color: getWinRateColor(nodeStats[selectedNode.id]?.winRate || 0) }}>
-                    {(nodeStats[selectedNode.id]?.winRate * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      )}
-
-
-
-      {/* Link Details Panel */}
-      {selectedLink && (() => {
-        const sourceId = typeof selectedLink.source === 'object' ? selectedLink.source.id : selectedLink.source;
-        const targetId = typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target;
-        const sourceName = graphData.nodes.find(n => n.id === sourceId)?.name || sourceId;
-        const targetName = graphData.nodes.find(n => n.id === targetId)?.name || targetId;
-
-        const sourceNode = graphData.nodes.find(n => n.id === sourceId);
-        const targetNode = graphData.nodes.find(n => n.id === targetId);
-
-        return (
-          <div className="absolute z-[40] bg-[#121212]/95 md:bg-[#121212]/30 backdrop-blur-xl md:backdrop-blur-md border-t border-white/10 md:border md:border-white/5 overflow-hidden flex flex-col transition-all duration-300 opacity-100 md:opacity-90 hover:md:opacity-100 max-md:w-full max-md:bottom-0 max-md:left-0 max-md:rounded-t-2xl max-md:rounded-b-none max-md:top-auto max-md:max-h-[35dvh] md:w-80 md:left-6 md:top-24 md:rounded-lg shadow-2xl md:shadow-none pb-20 md:pb-0 pointer-events-auto mb-20">
-            {/* Matchup Header */}
-            <div className="relative w-full bg-transparent md:aspect-[16/10] overflow-hidden flex flex-col md:items-center justify-center border-b border-white/5 shrink-0 max-md:py-4">
-              {/* Background Graphic or Gradient */}
-              <div className="absolute inset-0 bg-gradient-to-br from-[#1E293B] via-[#0F172A] to-[#1E293B] opacity-50" />
-
-              {/* Matchup Avatars */}
-              <div className="relative z-10 flex items-center justify-center gap-4 md:gap-6 md:mb-8 md:mt-2">
-                {/* Source Emcee */}
-                <div className="flex flex-col items-center">
-                  {sourceNode?.avatar_url ? (
-                    <Image
-                      src={sourceNode.avatar_url}
-                      alt={sourceName}
-                      width={56}
-                      height={56}
-                      className="w-12 h-12 md:w-14 md:h-14 rounded-full object-cover border-2 border-[#4ade80]/80 shadow-md"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 md:w-14 md:h-14 rounded-full bg-white/[0.05] border-2 border-[#4ade80]/80 flex items-center justify-center text-[#EFEFEF] font-bold text-lg shadow-md font-mono">
-                      {sourceName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                </div>
-
-                {/* Matchup Type Indicator */}
-                <div className="px-2 py-0.5 md:px-2.5 md:py-1 bg-black/40 backdrop-blur-sm rounded-full border border-white/5 text-[9px] md:text-[10px] font-bold text-[#A3A3A3] uppercase tracking-wider">
-                  {selectedLink.type === 'DEFEATED' ? 'def.' : 'vs'}
-                </div>
-
-                {/* Target Emcee */}
-                <div className="flex flex-col items-center">
-                  {targetNode?.avatar_url ? (
-                    <Image
-                      src={targetNode.avatar_url}
-                      alt={targetName}
-                      width={56}
-                      height={56}
-                      className="w-12 h-12 md:w-14 md:h-14 rounded-full object-cover border-2 border-[#f87171]/80 shadow-md"
-                    />
-                  ) : (
-                    <div className="w-12 h-12 md:w-14 md:h-14 rounded-full bg-white/[0.05] border-2 border-[#f87171]/80 flex items-center justify-center text-[#EFEFEF] font-bold text-lg shadow-md font-mono">
-                      {targetName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Close Button */}
-              <button
-                onClick={() => setSelectedLink(null)}
-                className="absolute md:top-4 md:right-4 max-md:top-3 max-md:right-3 w-8 h-8 flex items-center justify-center bg-black/20 hover:bg-black/55 text-white/80 hover:text-white rounded-full border border-white/10 backdrop-blur-sm transition-all z-20"
-              >
-                ✕
-              </button>
-
-              {/* Gradient Overlay & Name */}
-              <div className="md:absolute md:bottom-0 md:left-0 md:w-full md:bg-gradient-to-t md:from-[#121212]/70 md:via-[#121212]/30 md:to-transparent md:pt-12 md:pb-2 px-3 text-center max-md:mt-3">
-                <h2 className="text-sm md:text-lg font-bold text-[#EFEFEF] truncate tracking-tight">
-                  <span className="text-[#4ade80]">{sourceName}</span>
-                  <span className="text-[#777] mx-2 font-normal text-xs md:text-sm">{selectedLink.type === 'DEFEATED' ? 'def.' : 'vs'}</span>
-                  <span className="text-[#f87171]">{targetName}</span>
-                </h2>
-              </div>
-            </div>
-
-            {/* Details Body */}
-            <div className="px-3 pb-3 pt-2 space-y-5">
-              {selectedLink.view_count != null && (
-                <div className="flex justify-between items-end border-b border-white/5 pb-3">
-                  <p className="text-xs text-[#A3A3A3] uppercase tracking-widest font-medium">Views</p>
-                  <p className="text-lg text-[#EFEFEF] font-mono leading-none">{selectedLink.view_count.toLocaleString()}</p>
-                </div>
-              )}
-
-              {/* Battle Info Grid */}
-              <div>
-                <p className="text-xs text-[#A3A3A3] uppercase tracking-widest mb-3 font-medium">Battle Info</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-white/[0.02] p-3 rounded-md border border-white/5 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Format</p>
-                    <p className="text-sm font-mono text-[#EFEFEF] mt-1">{FORMAT_LABELS[selectedLink.match_format] || selectedLink.match_format || 'N/A'}</p>
-                  </div>
-                  <div className="bg-white/[0.02] p-3 rounded-md border border-white/5 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Type</p>
-                    <p className="text-sm font-mono text-[#EFEFEF] mt-1">{MATCH_TYPE_LABELS[selectedLink.match_type] || selectedLink.match_type || 'N/A'}</p>
-                  </div>
-                  <div className="bg-white/[0.02] p-3 rounded-md border border-white/5 flex flex-col justify-between transition-all hover:bg-white/[0.04]">
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Year</p>
-                    <p className="text-sm font-mono text-[#EFEFEF] mt-1">{selectedLink.year || 'N/A'}</p>
-                  </div>
-                  <div className={`bg-white/[0.02] p-3 rounded-md flex flex-col justify-between border ${selectedLink.type === 'DEFEATED' ? 'border-[#22c55e]/15' : 'border-white/5'
-                    } transition-all hover:bg-white/[0.04]`}>
-                    <p className="text-[10px] text-[#A3A3A3] uppercase tracking-wider">Outcome</p>
-                    <p className={`text-sm font-mono mt-1 truncate ${selectedLink.type === 'DEFEATED' ? 'text-[#4ade80]' : 'text-[#EFEFEF]'
-                      }`} title={selectedLink.type === 'DEFEATED' ? `${sourceName} won` : 'Draw'}>
-                      {selectedLink.type === 'DEFEATED' ? `${sourceName} won` : 'Draw'}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Legend */}
-      <div className="absolute bottom-6 left-6 z-20 w-64 select-none pointer-events-auto transition-all duration-300 opacity-60 hover:opacity-100 max-md:hidden">
-        {/* Toggle Node Size Basis */}
-        <div className="mb-4 flex flex-col gap-2">
-          <p className="text-[9px] text-[#555] uppercase tracking-widest font-bold">Node Size Basis</p>
-          <div className="flex gap-4 border-b border-[#222] pb-1.5 w-full">
-            <button
-              onClick={() => setSizeBasis('battles')}
-              className={`text-[10px] font-bold tracking-wider transition-all -mb-[7px] pb-1 cursor-pointer ${sizeBasis === 'battles'
-                ? 'text-[#EFEFEF] border-b border-[#EFEFEF]'
-                : 'text-[#555] hover:text-[#A3A3A3]'
-                }`}
-            >
-              BATTLES
-            </button>
-            <button
-              onClick={() => setSizeBasis('views')}
-              className={`text-[10px] font-bold tracking-wider transition-all -mb-[7px] pb-1 cursor-pointer ${sizeBasis === 'views'
-                ? 'text-[#EFEFEF] border-b border-[#EFEFEF]'
-                : 'text-[#555] hover:text-[#A3A3A3]'
-                }`}
-            >
-              VIEWS
-            </button>
-          </div>
-        </div>
-
-          <div className="flex gap-6 mt-4">
-            <div className="space-y-1.5">
-              <p className="text-[9px] text-[#555] uppercase tracking-widest font-bold">Nodes</p>
-              <div className="flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-[#4ade80]"></div>
-                <span className="text-[10px] text-[#A3A3A3] font-medium">Emcee Win Rate</span>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-[9px] text-[#555] uppercase tracking-widest font-bold">Edges</p>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-0.5 bg-[#FFD700]"></div>
-                <span className="text-[10px] text-[#A3A3A3] font-medium">Tournament</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-0.5 bg-[#718096]"></div>
-                <span className="text-[10px] text-[#A3A3A3] font-medium">Non-Tournament</span>
-              </div>
-            </div>
-          </div>
-      </div>
+            return 0.05;
+          }
+          return link.type === 'MEMBER_OF' ? 0.15 : 0.6;
+        }}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        linkDirectionalArrowLength={(link: any) => link.type === 'DEFEATED' || link.type === 'WON' || link.type === 'LOST' ? 4 : 0}
+        linkDirectionalArrowRelPos={1}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        linkDirectionalParticles={(link: any) => {
+          if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) return link.type === 'MEMBER_OF' ? 2 : 4;
+          return 0;
+        }}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        linkDirectionalParticleSpeed={(link: any) => {
+          if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
+            return link.type === 'MEMBER_OF' ? 0.005 : -0.003;
+          }
+          return 0;
+        }}
+      />
     </div>
   );
 }
