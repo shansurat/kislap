@@ -46,6 +46,8 @@ interface SidebarControlsProps {
   setSizeBasis: (basis: 'battles' | 'views') => void;
   colorMode: 'group' | 'winRate';
   setColorMode: (mode: 'group' | 'winRate') => void;
+  linkColorMode: 'relation' | 'battle_type' | 'format';
+  setLinkColorMode: (mode: 'relation' | 'battle_type' | 'format') => void;
   showLabels: boolean;
   setShowLabels: (show: boolean) => void;
 }
@@ -76,6 +78,8 @@ export function SidebarControls({
   setSizeBasis,
   colorMode,
   setColorMode,
+  linkColorMode,
+  setLinkColorMode,
   showLabels,
   setShowLabels,
 }: SidebarControlsProps) {
@@ -187,6 +191,24 @@ export function SidebarControls({
               onClick={() => setColorMode('group')}
               className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'group' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
             >Entity Group</button>
+          </div>
+        </div>
+
+        <div>
+          <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-1.5 font-semibold">Link Color Mode</span>
+          <div className="flex gap-1 bg-neutral-950 p-1 border border-neutral-800 rounded-none">
+            <button 
+              onClick={() => setLinkColorMode('relation')}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${linkColorMode === 'relation' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Relation</button>
+            <button 
+              onClick={() => setLinkColorMode('battle_type')}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${linkColorMode === 'battle_type' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Battle Type</button>
+            <button 
+              onClick={() => setLinkColorMode('format')}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${linkColorMode === 'format' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Format</button>
           </div>
         </div>
 

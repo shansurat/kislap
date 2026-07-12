@@ -11,6 +11,7 @@ export interface GraphNode {
   x?: number;
   y?: number;
   z?: number;
+  battleCount?: number;
 }
 
 export interface GraphLink {
@@ -247,6 +248,22 @@ export function useGraphData({
         return sId === node.id || tId === node.id;
       });
     });
+
+    // Calculate degree (total active battles) for each node
+    const degreeCount: Record<string, number> = {};
+    links.forEach(link => {
+      if (link.type !== 'MEMBER_OF') {
+        const sId = typeof link.source === 'object' ? link.source.id : link.source;
+        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+        degreeCount[sId] = (degreeCount[sId] || 0) + 1;
+        degreeCount[tId] = (degreeCount[tId] || 0) + 1;
+      }
+    });
+
+    nodes = nodes.map(node => ({
+      ...node,
+      battleCount: degreeCount[node.id] || 0
+    }));
 
     // 7. Inject Battle nodes into the nodes array
     Object.values(battleHubs).forEach(rumble => {
