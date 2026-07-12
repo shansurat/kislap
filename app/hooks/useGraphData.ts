@@ -279,6 +279,13 @@ export function useGraphData({
       });
     });
 
+    // 8. Ensure links have string IDs for source and target to prevent react-force-graph crashes
+    links = links.map(link => ({
+      ...link,
+      source: typeof link.source === 'object' ? link.source.id : link.source,
+      target: typeof link.target === 'object' ? link.target.id : link.target,
+    }));
+
     return { nodes, links };
   }, [graphData, selectedYear, selectedMatchType, selectedFormats, officialOnly]);
 

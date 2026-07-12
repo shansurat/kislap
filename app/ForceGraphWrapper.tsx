@@ -27,7 +27,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'winRate' | 'views' | 'wins' | 'losses'>('name');
   const [sizeBasis, setSizeBasis] = useState<'battles' | 'views'>('battles');
-  const [colorMode, setColorMode] = useState<'group' | 'winRate'>('winRate');
+  const [colorMode, setColorMode] = useState<'group' | 'winRate' | 'views'>('winRate');
   const [linkColorMode, setLinkColorMode] = useState<'relation' | 'battle_type' | 'format'>('relation');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [officialOnly, setOfficialOnly] = useState<boolean>(false);

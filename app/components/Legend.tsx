@@ -2,7 +2,7 @@ import React from 'react';
 
 interface LegendProps {
   selectedFormats: string[];
-  colorMode: 'group' | 'winRate';
+  colorMode: 'group' | 'winRate' | 'views';
   linkColorMode: 'relation' | 'battle_type' | 'format';
 }
 
@@ -17,6 +17,16 @@ export function Legend({ selectedFormats, colorMode, linkColorMode }: LegendProp
           <div className="w-full h-1 bg-gradient-to-r from-[#f87171] via-[#facc15] to-[#4ade80] rounded-none"></div>
           <div className="flex justify-between text-[9px] text-neutral-600">
             <span>Low</span><span>Avg</span><span>High</span>
+          </div>
+        </div>
+      )}
+
+      {colorMode === 'views' && (
+        <div className="flex flex-col gap-1.5">
+          <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold">Total Views</span>
+          <div className="w-full h-1 bg-gradient-to-r from-[#38bdf8] via-[#eab308] to-[#f43f5e] rounded-none"></div>
+          <div className="flex justify-between text-[9px] text-neutral-600">
+            <span>Low</span><span>High</span>
           </div>
         </div>
       )}

@@ -31,6 +31,25 @@ const TEAM_MATERIAL = new THREE.MeshLambertMaterial({
   opacity: 0.9,
 });
 
+const interpolateHex = (hex1: string, hex2: string, t: number) => {
+  const r1 = parseInt(hex1.slice(1, 3), 16), g1 = parseInt(hex1.slice(3, 5), 16), b1 = parseInt(hex1.slice(5, 7), 16);
+  const r2 = parseInt(hex2.slice(1, 3), 16), g2 = parseInt(hex2.slice(3, 5), 16), b2 = parseInt(hex2.slice(5, 7), 16);
+  const r = Math.round(r1 + (r2 - r1) * t);
+  const g = Math.round(g1 + (g2 - g1) * t);
+  const b = Math.round(b1 + (b2 - b1) * t);
+  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+};
+
+const getViewsColor = (views: number) => {
+  // Use a power curve to spread out the colors better since views are heavily right-skewed
+  const t = Math.min(1, Math.pow(views / 150000000, 0.4));
+  if (t < 0.5) {
+    return interpolateHex('#38bdf8', '#eab308', t * 2);
+  } else {
+    return interpolateHex('#eab308', '#f43f5e', (t - 0.5) * 2);
+  }
+};
+
 const getWinRateColor = (rate: number) => {
   let h, s, l;
   if (rate < 0.5) {
@@ -70,7 +89,7 @@ interface ThreeForceGraphProps {
   hoveredLink: any | null;
   showLabels: boolean;
   sizeBasis: 'battles' | 'views';
-  colorMode: 'group' | 'winRate';
+  colorMode: 'group' | 'winRate' | 'views';
   linkColorMode: 'relation' | 'battle_type' | 'format';
   nodeStats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }>;
   highlightNodes: Set<string>;
@@ -247,6 +266,7 @@ function ThreeForceGraphComponent({
         if (obj.renderOrder !== targetRenderOrder) {
           obj.renderOrder = targetRenderOrder;
           mesh.renderOrder = targetRenderOrder;
+          sprite.renderOrder = targetRenderOrder;
           needsNextFrame = true;
         }
 
@@ -265,20 +285,28 @@ function ThreeForceGraphComponent({
           }
         }
 
+        if (sprite.material) {
+          if (sprite.material.depthTest !== targetDepthTest) {
+            sprite.material.depthTest = targetDepthTest;
+            sprite.material.needsUpdate = true;
+            needsNextFrame = true;
+          }
+        }
+
         // Scale node geometry
         let targetScale = 1.0;
         if (node.group === 'Battle') {
-          targetScale = 2.5;
+          targetScale = 2.0;
         } else {
           let basisVal = 0;
           if (state.sizeBasis === 'views') {
             basisVal = node.total_views ?? 0;
-            // Map 0 to 450M views smoothly on a 0.35 power curve from 1.5 to 12.0
-            targetScale = Math.max(1.5, Math.min(12.0, 1.5 + Math.pow(basisVal / 450000000, 0.35) * 10.5));
+            // Map 0 to 450M views smoothly on a 0.35 power curve from 1.5 to 8.5
+            targetScale = Math.max(1.5, Math.min(8.5, 1.5 + Math.pow(basisVal / 450000000, 0.35) * 7.0));
           } else {
             basisVal = node.battleCount ?? 0;
-            // Map 0 to 45 battles smoothly on a square root curve from 1.5 to 12.0
-            targetScale = Math.max(1.5, Math.min(12.0, 1.5 + Math.sqrt(basisVal / 45) * 10.5));
+            // Map 0 to 45 battles smoothly on a square root curve from 1.5 to 8.5
+            targetScale = Math.max(1.5, Math.min(8.5, 1.5 + Math.sqrt(basisVal / 45) * 7.0));
           }
         }
 
@@ -303,9 +331,11 @@ function ThreeForceGraphComponent({
         } else if (state.selectedNodeId) {
           if (isCenter) targetColorStr = '#FFFFFF';
           else if (!isHighlighted) targetColorStr = '#333333';
+          else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
           else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         } else {
-          targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
+          if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
+          else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         }
 
         // Only modify materials for non-shared nodes (like Emcees)
@@ -333,18 +363,27 @@ function ThreeForceGraphComponent({
         let targetOpacity = 0.7;
 
         if (state.selectedNodeId) {
+          // Clamp size scaling past distance 800
+          const clampedDistanceScale = Math.min(distance / 400, 800 / 400);
+          
+          // Fade opacity out linearly from distance 1000 to 1800
+          let distanceOpacity = 1.0;
+          if (distance > 1000) {
+            distanceOpacity = Math.max(0, 1.0 - (distance - 1000) / 800);
+          }
+
           if (isCenter) {
-            targetVisible = true;
+            targetVisible = distanceOpacity > 0;
             tgtColor = '#ffffff';
-            tgtHeight = 7.5 * (distance / 400);
-            targetY = (nodeHeight + 6.0) * (distance / 400);
-            targetOpacity = 1.0;
+            tgtHeight = 7.5 * clampedDistanceScale;
+            targetY = (nodeHeight + 6.0) * clampedDistanceScale;
+            targetOpacity = distanceOpacity;
           } else if (isHighlighted) {
-            targetVisible = true;
+            targetVisible = distanceOpacity > 0;
             tgtColor = '#ffffff';
-            tgtHeight = 5.2 * (distance / 400);
-            targetY = (nodeHeight + 4.5) * (distance / 400);
-            targetOpacity = 0.85;
+            tgtHeight = 5.5 * clampedDistanceScale;
+            targetY = (nodeHeight + 4.5) * clampedDistanceScale;
+            targetOpacity = 0.85 * distanceOpacity;
           }
         } else {
           const distSq = camPos.distanceToSquared(obj.position);
@@ -654,12 +693,13 @@ function ThreeForceGraphComponent({
           return '#6b7280';
         }
       }}
-      linkOpacity={(link: any) => {
+      linkWidth={(link: any) => {
         if (selectedNodeId || selectedLink) {
-          return highlightLinks.has(link) ? 0.8 : 0.04;
+          return highlightLinks.has(link) ? 1.5 : 0.3;
         }
-        return linkColorMode === 'relation' ? 0.25 : 0.18;
+        return 0.8;
       }}
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       linkDirectionalArrowLength={() => 0}
       linkDirectionalArrowRelPos={1}

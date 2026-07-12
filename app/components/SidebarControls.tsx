@@ -44,8 +44,8 @@ interface SidebarControlsProps {
   setOfficialOnly: (official: boolean) => void;
   sizeBasis: 'battles' | 'views';
   setSizeBasis: (basis: 'battles' | 'views') => void;
-  colorMode: 'group' | 'winRate';
-  setColorMode: (mode: 'group' | 'winRate') => void;
+  colorMode: 'group' | 'winRate' | 'views';
+  setColorMode: (mode: 'group' | 'winRate' | 'views') => void;
   linkColorMode: 'relation' | 'battle_type' | 'format';
   setLinkColorMode: (mode: 'relation' | 'battle_type' | 'format') => void;
   showLabels: boolean;
@@ -191,6 +191,10 @@ export function SidebarControls({
               onClick={() => setColorMode('group')}
               className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'group' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
             >Entity Group</button>
+            <button 
+              onClick={() => setColorMode('views')}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'views' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Views</button>
           </div>
         </div>
 
