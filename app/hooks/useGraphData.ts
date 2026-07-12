@@ -387,12 +387,41 @@ export function useGraphData({
       hNodes.add(typeof selectedLink.target === 'object' ? selectedLink.target.id : selectedLink.target);
     } else if (selectedNodeId) {
       hNodes.add(selectedNodeId);
+      
+      const hubIds = new Set<string>();
+
+      // First pass: find direct neighbors and collect any Battle Hubs
       displayData.links.forEach(link => {
         const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
         const targetId = typeof link.target === 'object' ? link.target.id : link.target;
-        if (sourceId === selectedNodeId) { hLinks.add(link); hNodes.add(targetId); }
-        else if (targetId === selectedNodeId) { hLinks.add(link); hNodes.add(sourceId); }
+        
+        if (sourceId === selectedNodeId) { 
+          hLinks.add(link); 
+          hNodes.add(targetId); 
+          if (displayData.nodes.find(n => n.id === targetId)?.group === 'Battle') hubIds.add(targetId);
+        }
+        else if (targetId === selectedNodeId) { 
+          hLinks.add(link); 
+          hNodes.add(sourceId); 
+          if (displayData.nodes.find(n => n.id === sourceId)?.group === 'Battle') hubIds.add(sourceId);
+        }
       });
+
+      // Second pass: if we found Battle Hubs, expand to all participants in those battles
+      if (hubIds.size > 0) {
+        displayData.links.forEach(link => {
+          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+          
+          if (hubIds.has(sourceId)) {
+            hLinks.add(link);
+            hNodes.add(targetId);
+          } else if (hubIds.has(targetId)) {
+            hLinks.add(link);
+            hNodes.add(sourceId);
+          }
+        });
+      }
     }
 
     return { highlightNodes: hNodes, highlightLinks: hLinks };

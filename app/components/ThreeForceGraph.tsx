@@ -253,6 +253,12 @@ function ThreeForceGraphComponent({
         // Retrieve fresh node properties (e.g. updated battleCount)
         const node = nodeMap.get(initialNode.id) || initialNode;
 
+        if (node.group === 'Battle') {
+          if (mesh.visible !== false) mesh.visible = false;
+          if (sprite.visible !== false) sprite.visible = false;
+          return; // Skip all other visual logic for invisible hub nodes
+        }
+
         const isCenter = state.selectedNodeId === node.id;
         const isHighlighted = state.highlightNodes.has(node.id);
 
@@ -544,6 +550,12 @@ function ThreeForceGraphComponent({
     sprite.renderOrder = 999; // Render labels on top of links and nodes
     sprite.visible = false; // Visibility and position handled dynamically by frame animation loop
     group.add(sprite);
+
+    // Completely hide the node visually if it's a Battle hub
+    if (node.group === 'Battle') {
+      mesh.visible = false;
+      sprite.visible = false;
+    }
 
     // Register node group in flat array for fast loop updates
     nodeGroupsRef.current.push(group);

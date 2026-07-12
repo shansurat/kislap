@@ -110,18 +110,36 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       setSelectedLink(null);
       if (fgRef.current && node.x !== undefined && node.y !== undefined && node.z !== undefined) {
         // Find all neighbor nodes
-        const neighbors = displayData.links
-          .filter(l => {
+        const directNeighbors = new Set<string>();
+        const battleHubs = new Set<string>();
+
+        // First pass: find direct neighbors
+        displayData.links.forEach(l => {
+          const sId = typeof l.source === 'object' ? l.source.id : l.source;
+          const tId = typeof l.target === 'object' ? l.target.id : l.target;
+          
+          if (sId === node.id) {
+            directNeighbors.add(tId);
+            if (displayData.nodes.find(n => n.id === tId)?.group === 'Battle') battleHubs.add(tId);
+          } else if (tId === node.id) {
+            directNeighbors.add(sId);
+            if (displayData.nodes.find(n => n.id === sId)?.group === 'Battle') battleHubs.add(sId);
+          }
+        });
+
+        // Second pass: find participants of the Battle Hubs
+        if (battleHubs.size > 0) {
+          displayData.links.forEach(l => {
             const sId = typeof l.source === 'object' ? l.source.id : l.source;
             const tId = typeof l.target === 'object' ? l.target.id : l.target;
-            return sId === node.id || tId === node.id;
-          })
-          .map(l => {
-            const sId = typeof l.source === 'object' ? l.source.id : l.source;
-            const tId = typeof l.target === 'object' ? l.target.id : l.target;
-            const neighborId = sId === node.id ? tId : sId;
-            return displayData.nodes.find(n => n.id === neighborId);
-          })
+            
+            if (battleHubs.has(sId)) directNeighbors.add(tId);
+            else if (battleHubs.has(tId)) directNeighbors.add(sId);
+          });
+        }
+
+        const neighbors = Array.from(directNeighbors)
+          .map(id => displayData.nodes.find(n => n.id === id))
           .filter(Boolean) as any[];
 
         const allNodes = [node, ...neighbors];
