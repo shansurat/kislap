@@ -57,26 +57,33 @@ export async function fetchGraphDataForVisualization() {
   const session = driver.session();
   try {
     const nodesRes = await session.run(`
-      MATCH (n) WHERE labels(n)[0] IN ['Emcee', 'Event']
-      OPTIONAL MATCH (n:Emcee)-[r:DEFEATED|BATTLED]-()
+      MATCH (n:Emcee)
+      OPTIONAL MATCH (n)-[r:DEFEATED|BATTLED]-()
       WITH n, count(r) AS battleCount
       RETURN n.id AS id, 
-             labels(n)[0] AS group, 
-             COALESCE(n.stage_name, n.event_name, 'Unknown') AS name, 
+             CASE WHEN n:Team THEN 'Team' ELSE 'Emcee' END AS group, 
+             COALESCE(n.stage_name, 'Unknown') AS name, 
              battleCount
+      UNION ALL
+      MATCH (n:Event)
+      RETURN n.id AS id, 
+             'Event' AS group, 
+             COALESCE(n.event_name, 'Unknown') AS name, 
+             0 AS battleCount
     `);
 
     const linksRes = await session.run(`
-      MATCH (source:Emcee)-[r]->(target:Emcee)
+      MATCH (source:Emcee)-[r:DEFEATED|BATTLED]->(target:Emcee)
       WHERE type(r) = 'DEFEATED' OR (type(r) = 'BATTLED' AND source.id < target.id)
       MATCH (b:Battle {id: r.battle_id})
       OPTIONAL MATCH (b)-[:HELD_AT]->(ev:Event)
-      RETURN source.id AS source, target.id AS target, type(r) AS type, ev.year AS year, b.match_type AS match_type, b.match_format AS match_format
+      RETURN source.id AS source, target.id AS target, type(r) AS type, ev.year AS year, 
+             CASE WHEN b.is_promo THEN 'promo' WHEN b.is_tryout THEN 'tryout' ELSE 'regular' END AS match_type, 
+             b.match_format AS match_format, b.winner AS winner
       UNION
-      MATCH (source:Emcee)-[r]-(:Emcee)
-      WHERE type(r) IN ['DEFEATED', 'BATTLED']
+      MATCH (source:Emcee)-[r:DEFEATED|BATTLED]-(:Emcee)
       MATCH (b:Battle {id: r.battle_id})-[:HELD_AT]->(target:Event)
-      RETURN DISTINCT source.id AS source, target.id AS target, 'ATTENDED' AS type, target.year AS year, null AS match_type, null AS match_format
+      RETURN DISTINCT source.id AS source, target.id AS target, 'ATTENDED' AS type, target.year AS year, null AS match_type, null AS match_format, null AS winner
     `);
 
     const nodes = nodesRes.records.map(rec => {
@@ -107,7 +114,8 @@ export async function fetchGraphDataForVisualization() {
         type: rec.get('type'),
         year,
         match_type: rec.get('match_type') || null,
-        match_format: rec.get('match_format') || null
+        match_format: rec.get('match_format') || null,
+        winner: rec.get('winner') || null
       };
     });
 

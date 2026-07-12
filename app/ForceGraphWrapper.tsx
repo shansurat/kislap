@@ -6,12 +6,25 @@ import Image from 'next/image';
 import * as THREE from 'three';
 import SpriteText from 'three-spritetext';
 
-const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { ssr: false });
+const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { 
+  ssr: false,
+  loading: () => (
+    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-neutral-400 font-mono text-xs select-none">
+      <div className="w-8 h-8 border border-t-transparent border-neutral-700 animate-spin mb-3"></div>
+      <div className="tracking-widest uppercase opacity-60">Initializing 3D Engine...</div>
+    </div>
+  )
+});
+
+// Cache & reuse geometries globally to save CPU cycles and GC pauses
+const SHARED_SPHERE_GEOMETRY = new THREE.SphereGeometry(1, 16, 16);
+const SHARED_OCTAHEDRON_GEOMETRY = new THREE.OctahedronGeometry(1);
+const SHARED_DODECAHEDRON_GEOMETRY = new THREE.DodecahedronGeometry(1);
 
 interface GraphData {
   nodes: { id: string; name: string; val: number; group?: string; hometown?: string | null; total_views?: number | null; avatar_url?: string | null }[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  links: { source: string | any; target: string | any; type: string; year?: number | null; match_type?: string | null; match_format?: string | null; battle_name?: string | null; view_count?: number | null; event_name?: string | null; battle_id?: string | null }[];
+  links: { source: string | any; target: string | any; type: string; year?: number | null; match_type?: string | null; match_format?: string | null; battle_name?: string | null; view_count?: number | null; event_name?: string | null; battle_id?: string | null; winner?: string[] | null }[];
 }
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -38,6 +51,7 @@ const getWinRateColor = (rate: number) => `hsl(${Math.round(rate * 120)}, 80%, 5
 export default function GraphClient({ graphData }: { graphData: GraphData }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
+  const hasInitiallyZoomed = useRef<boolean>(false);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
 
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['1v1', '2v2', '3v3', '5v5', '3way', 'royal_rumble', 'handicap']);
@@ -55,11 +69,13 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   const [sortBy, setSortBy] = useState<'name' | 'winRate' | 'views' | 'wins' | 'losses'>('name');
   const [sizeBasis, setSizeBasis] = useState<'battles' | 'views'>('battles');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [officialOnly, setOfficialOnly] = useState<boolean>(false);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 
   useEffect(() => {
     setSelectedNodeId(null);
     setSelectedLink(null);
-  }, [selectedYear, selectedMatchType, selectedFormats]);
+  }, [selectedYear, selectedMatchType, selectedFormats, officialOnly]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -93,6 +109,14 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       // Exclude tryout and promo (default behavior)
       if (link.match_type === 'tryout' || link.match_type === 'promo') return false;
 
+      // Filter by Official Battles ONLY
+      if (officialOnly) {
+        const winners = link.winner || [];
+        const isUnjudged = winners.includes('Unjudged');
+        const hasResult = winners.length > 0;
+        if (isUnjudged || !hasResult) return false;
+      }
+
       // Filter by Year
       if (selectedYear !== 'All' && link.year !== parseInt(selectedYear)) return false;
 
@@ -115,6 +139,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       view_count: number | null;
       match_type: string;
       match_format: string;
+      winner: string[] | null;
     }> = {};
 
     initialLinks.forEach(link => {
@@ -134,7 +159,8 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
             participants: new Set<string>(),
             view_count: link.view_count || null,
             match_type: link.match_type || 'other',
-            match_format: link.match_format || 'royal_rumble'
+            match_format: link.match_format || 'royal_rumble',
+            winner: link.winner || null
           };
         }
 
@@ -192,7 +218,8 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           event_name: rumble.event_name,
           year: rumble.year,
           view_count: rumble.view_count,
-          match_type: rumble.match_type
+          match_type: rumble.match_type,
+          winner: rumble.winner
         });
       });
     });
@@ -268,14 +295,19 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
     });
 
     return { nodes, links };
-  }, [graphData, selectedYear, selectedMatchType, selectedFormats]);
+  }, [graphData, selectedYear, selectedMatchType, selectedFormats, officialOnly]);
 
   const nodeStats = useMemo(() => {
     const stats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }> = {};
     displayData.nodes.forEach(node => { stats[node.id] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 }; });
 
     displayData.links.forEach(link => {
-      if (link.type === 'MEMBER_OF') return;
+      if (link.type === 'MEMBER_OF' || link.type === 'ATTENDED') return;
+      if (link.match_type === 'promo' || link.match_type === 'tryout') return;
+
+      const winners = link.winner || [];
+      if (winners.includes('Unjudged')) return;
+
       const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
       const targetId = typeof link.target === 'object' ? link.target.id : link.target;
 
@@ -286,8 +318,21 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         stats[sourceId].wins += 1; stats[targetId].losses += 1;
         stats[sourceId].total += 1; stats[targetId].total += 1;
       } else if (link.type === 'BATTLED') {
-        stats[sourceId].draws += 1; stats[targetId].draws += 1;
-        stats[sourceId].total += 1; stats[targetId].total += 1;
+        if (winners.includes('Draw')) {
+          stats[sourceId].draws += 1; stats[targetId].draws += 1;
+          stats[sourceId].total += 1; stats[targetId].total += 1;
+        }
+      } else if (link.type === 'WON') {
+        stats[sourceId].wins += 1;
+        stats[sourceId].total += 1;
+      } else if (link.type === 'LOST') {
+        stats[targetId].losses += 1;
+        stats[targetId].total += 1;
+      } else if (link.type === 'PARTICIPATED_IN') {
+        if (winners.includes('Draw')) {
+          stats[sourceId].draws += 1;
+          stats[sourceId].total += 1;
+        }
       }
     });
 
@@ -386,24 +431,42 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
 
   // --- LIVE STATE REF ---
   // Stores React state purely so the 3D Engine can read it instantly every frame without rebuilding nodes
-  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats });
+  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats, hoveredNodeId });
   useEffect(() => {
-    graphState.current = { selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats };
-  }, [selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats]);
+    graphState.current = { selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats, hoveredNodeId };
+  }, [selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, nodeStats, hoveredNodeId]);
 
+  // 1. Handle resize listener (mount only)
   useEffect(() => {
     if (containerRef.current) {
-      const updateDimensions = () => setDimensions({ width: containerRef.current?.clientWidth || 800, height: containerRef.current?.clientHeight || 600 });
+      const updateDimensions = () => setDimensions({ 
+        width: containerRef.current?.clientWidth || 800, 
+        height: containerRef.current?.clientHeight || 600 
+      });
       updateDimensions();
       window.addEventListener('resize', updateDimensions);
+      return () => window.removeEventListener('resize', updateDimensions);
+    }
+  }, []);
+
+  // 2. Initial zoom to fit when graph data first loads
+  useEffect(() => {
+    if (displayData.nodes.length > 0 && !hasInitiallyZoomed.current) {
       setTimeout(() => {
         if (fgRef.current) {
           fgRef.current.d3Force('charge').strength(-40);
           fgRef.current.d3ReheatSimulation();
-          fgRef.current.zoomToFit(400);
+          fgRef.current.zoomToFit(800, 80); // Comfortable padding
+          hasInitiallyZoomed.current = true;
         }
-      }, 500);
-      return () => window.removeEventListener('resize', updateDimensions);
+      }, 600);
+    }
+  }, [displayData]);
+
+  // 3. Reheat simulation without moving the camera when filters change
+  useEffect(() => {
+    if (hasInitiallyZoomed.current && fgRef.current) {
+      fgRef.current.d3ReheatSimulation();
     }
   }, [displayData]);
 
@@ -414,14 +477,14 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
     const isTeam = node.group === 'Team';
     const isBattle = node.group === 'Battle';
 
-    // 1. Static Geometry Generation
+    // 1. Static Geometry Generation (reusing shared read-only geometries)
     let geometry;
     if (isTeam) {
-      geometry = new THREE.OctahedronGeometry(1);
+      geometry = SHARED_OCTAHEDRON_GEOMETRY;
     } else if (isBattle) {
-      geometry = new THREE.DodecahedronGeometry(1);
+      geometry = SHARED_DODECAHEDRON_GEOMETRY;
     } else {
-      geometry = new THREE.SphereGeometry(1, 16, 16);
+      geometry = SHARED_SPHERE_GEOMETRY;
     }
     const material = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.95 });
     const mesh = new THREE.Mesh(geometry, material);
@@ -431,9 +494,6 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
     sprite.material.depthWrite = false;
     sprite.material.depthTest = false;
     sprite.renderOrder = 999;
-    sprite.backgroundColor = 'rgba(18, 18, 18, 0.75)';
-    sprite.padding = 2;
-    sprite.borderRadius = 0;
     group.add(sprite);
 
     // 2. High-Performance Render Loop
@@ -500,21 +560,21 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
 
       const nodeHeight = targetScale;
 
+      let targetVisible = false;
+      let tgtColor = 'rgba(255, 255, 255, 0.7)';
+      let tgtHeight = 2.5;
+      let targetY = nodeHeight + 2.0;
+      let targetOpacity = 1;
+
       if (hasSelection) {
         if (isHighlighted) {
-          sprite.visible = true;
-          sprite.material.opacity = 1;
+          targetVisible = true;
+          targetOpacity = 1;
 
           const isPrimary = isCenter || state.selectedLink !== null;
-          const tgtColor = isPrimary ? '#FFFFFF' : '#A3A3A3';
-          const tgtHeight = isPrimary ? 5 : 3.5;
-
-          if (sprite.color !== tgtColor) sprite.color = tgtColor;
-          if (sprite.textHeight !== tgtHeight) sprite.textHeight = tgtHeight;
-          sprite.position.set(0, nodeHeight + (isPrimary ? 4 : 2), 0);
-        } else {
-          // Strictly hides all non-selected/non-connected nodes instantly
-          sprite.visible = false;
+          tgtColor = isPrimary ? '#FFFFFF' : '#A3A3A3';
+          tgtHeight = isPrimary ? 4.2 : 3.5;
+          targetY = nodeHeight + (isPrimary ? 3.0 : 2.0);
         }
       } else {
         // Camera Distance logic using ultra-fast Squared Distance
@@ -524,72 +584,121 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         const VIS_DIST_SQ = VIS_DIST * VIS_DIST;
 
         if (distSq < VIS_DIST_SQ) {
-          sprite.visible = true;
-
-          const tgtColor = 'rgba(255, 255, 255, 0.7)';
-          const tgtHeight = 2.5;
-          if (sprite.color !== tgtColor) sprite.color = tgtColor;
-          if (sprite.textHeight !== tgtHeight) sprite.textHeight = tgtHeight;
-          sprite.position.set(0, nodeHeight + 2, 0);
+          targetVisible = true;
+          tgtColor = 'rgba(255, 255, 255, 0.7)';
+          tgtHeight = 2.5;
+          targetY = nodeHeight + 2.0;
 
           const dist = Math.sqrt(distSq);
           let opacity = 1;
           if (dist > (VIS_DIST - FADE_DIST)) {
             opacity = (VIS_DIST - dist) / FADE_DIST;
           }
-          sprite.material.opacity = opacity;
-        } else {
-          sprite.visible = false;
+          targetOpacity = opacity;
         }
+      }
+
+      sprite.visible = targetVisible;
+
+      if (targetVisible) {
+        // Color transition (discrete update to prevent endless canvas redraws)
+        if (sprite.userData.currentColor !== tgtColor) {
+          sprite.color = tgtColor;
+          sprite.userData.currentColor = tgtColor;
+        }
+
+        // Opacity transition (immediate or eased, material opacity doesn't redraw canvas)
+        sprite.material.opacity = targetOpacity;
+
+        // Smooth text height easing (Grow animation)
+        const currentHeight = sprite.textHeight;
+        const newHeight = currentHeight + (tgtHeight - currentHeight) * 0.35;
+        if (Math.abs(newHeight - currentHeight) > 0.01) {
+          sprite.textHeight = newHeight;
+        } else if (sprite.textHeight !== tgtHeight) {
+          sprite.textHeight = tgtHeight;
+        }
+
+        // Smooth float distance easing
+        const currentY = sprite.userData.currentY ?? targetY;
+        const newY = currentY + (targetY - currentY) * 0.35;
+        sprite.userData.currentY = newY;
+
+        // Position along camera's up vector in world space to keep it always "on top"
+        sprite.position.setFromMatrixColumn(camera.matrixWorld, 1).multiplyScalar(newY);
+      } else {
+        // If not visible, immediately reset to base values so it's ready for the next hover
+        sprite.textHeight = tgtHeight;
+        sprite.userData.currentY = targetY;
+        sprite.position.setFromMatrixColumn(camera.matrixWorld, 1).multiplyScalar(targetY);
       }
     };
 
     return group;
   }, []);
 
-  const emptyNodeLabel = useCallback(() => '', []);
+  const handleNodeLabel = useCallback((node: any) => {
+    const groupColor = node.group === 'Team' ? '#38bdf8' : node.group === 'Event' ? '#eab308' : '#a3a3a3';
+    return `
+      <div style="
+        background: rgba(13, 13, 13, 0.95);
+        border: 1px solid #262626;
+        padding: 8px 12px;
+        color: #e5e5e5;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 12px;
+        border-radius: 0px;
+      ">
+        <div style="font-weight: 600; color: #ffffff;">${node.name}</div>
+        <div style="font-size: 9px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; color: ${groupColor}; font-weight: 700;">
+          ${node.group}
+        </div>
+        ${node.hometown ? `<div style="font-size: 10px; color: #737373; margin-top: 2px;">${node.hometown}</div>` : ''}
+      </div>
+    `;
+  }, []);
 
   return (
     <div ref={containerRef} className="w-full h-full relative group font-sans">
 
       {/* Node Details Overlay */}
       {selectedNode && !selectedLink && (
-        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#121212]/80 backdrop-blur-md border border-white/10 rounded-lg p-4 text-[#EFEFEF] shadow-xl pointer-events-auto transition-all">
-          <button onClick={() => setSelectedNodeId(null)} className="absolute top-3 right-3 text-white/50 hover:text-white transition-colors">✕</button>
+        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
+          <button onClick={() => setSelectedNodeId(null)} className="absolute top-3 right-3 text-neutral-500 hover:text-white transition-colors">✕</button>
 
-          <div className="flex items-center gap-3 mb-3">
+          <div className="flex items-center gap-3 pb-3 mb-3 border-b border-neutral-800">
             {selectedNode.avatar_url ? (
-              <img src={selectedNode.avatar_url} alt="" className="w-12 h-12 rounded-full object-cover border border-white/10" />
+              <img src={selectedNode.avatar_url} alt="" className="w-12 h-12 rounded-full object-cover border border-neutral-800" />
             ) : (
-              <div className={`w-12 h-12 bg-white/5 border border-white/10 flex items-center justify-center text-lg font-bold ${
-                selectedNode.group === 'Team' ? 'rounded-md' : selectedNode.group === 'Battle' ? 'rounded-lg text-[#eab308]' : 'rounded-full'
+              <div className={`w-12 h-12 bg-neutral-900 border border-neutral-800 flex items-center justify-center text-lg font-bold ${
+                selectedNode.group === 'Battle' ? 'text-[#eab308]' : 'text-neutral-400'
               }`}>
                 {selectedNode.group === 'Battle' ? '⚔️' : selectedNode.name.charAt(0)}
               </div>
             )}
             <div>
-              <h3 className="font-bold text-base leading-tight pr-4">{selectedNode.name}</h3>
-              <span className="text-[10px] uppercase tracking-wider text-[#0ea5e9] font-semibold">{selectedNode.group}</span>
+              <h3 className="font-bold text-base leading-tight pr-4 text-white">{selectedNode.name}</h3>
+              <span className="inline-block mt-1 text-[9px] uppercase tracking-wider bg-neutral-900 border border-neutral-800 text-neutral-400 px-1.5 py-0.5 font-semibold">{selectedNode.group}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-xs text-[#A3A3A3] mb-3">
-            {selectedNode.hometown && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Hometown</span>{selectedNode.hometown}</div>}
-            {selectedNode.total_views != null && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Total Views</span>{selectedNode.total_views.toLocaleString()}</div>}
+          <div className="grid grid-cols-2 gap-2 text-xs text-neutral-400 mb-4">
+            {selectedNode.hometown && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Hometown</span><span className="text-neutral-200">{selectedNode.hometown}</span></div>}
+            {selectedNode.total_views != null && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Total Views</span><span className="text-neutral-200">{selectedNode.total_views.toLocaleString()}</span></div>}
           </div>
 
           {nodeStats[selectedNode.id] && (
-            <div className="bg-white/5 rounded-md p-2 flex justify-between text-center text-xs border border-white/5">
-              <div><span className="block text-[#4ade80] font-bold">{nodeStats[selectedNode.id].wins}</span><span className="text-[9px] text-[#666] uppercase">Wins</span></div>
-              <div><span className="block text-[#f87171] font-bold">{nodeStats[selectedNode.id].losses}</span><span className="text-[9px] text-[#666] uppercase">Losses</span></div>
-              <div><span className="block text-[#A3A3A3] font-bold">{nodeStats[selectedNode.id].draws}</span><span className="text-[9px] text-[#666] uppercase">Draws</span></div>
-              <div><span className="block text-[#EFEFEF] font-bold">{((nodeStats[selectedNode.id].winRate || 0) * 100).toFixed(0)}%</span><span className="text-[9px] text-[#666] uppercase">Win Rate</span></div>
+            <div className="bg-neutral-900/50 p-2 flex justify-between text-center text-xs border border-neutral-800">
+              <div><span className="block text-[#4ade80] font-bold">{nodeStats[selectedNode.id].wins}</span><span className="text-[9px] text-neutral-500 uppercase">Wins</span></div>
+              <div><span className="block text-[#f87171] font-bold">{nodeStats[selectedNode.id].losses}</span><span className="text-[9px] text-neutral-500 uppercase">Losses</span></div>
+              <div><span className="block text-neutral-400 font-bold">{nodeStats[selectedNode.id].draws}</span><span className="text-[9px] text-neutral-500 uppercase">Draws</span></div>
+              <div><span className="block text-neutral-200 font-bold">{((nodeStats[selectedNode.id].winRate || 0) * 100).toFixed(0)}%</span><span className="text-[9px] text-neutral-500 uppercase">Win Rate</span></div>
             </div>
           )}
 
           {selectedNode.group === 'Battle' && battleParticipants.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-white/5">
-              <span className="block text-[9px] uppercase tracking-wider text-[#666] mb-1.5">Participants</span>
+            <div className="mt-3 pt-3 border-t border-neutral-800">
+              <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-1.5">Participants</span>
               <div className="flex flex-wrap gap-1">
                 {battleParticipants.map(p => {
                   const winsLink = displayData.links.find(
@@ -601,10 +710,10 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
                   return (
                     <div
                       key={p.id}
-                      className={`text-[10px] px-2 py-0.5 rounded border flex items-center gap-1 ${
+                      className={`text-[10px] px-2 py-0.5 border flex items-center gap-1 ${
                         isWinner
-                          ? 'bg-green-950/30 border-green-500/30 text-green-400 font-semibold shadow-sm'
-                          : 'bg-white/5 border-white/5 text-[#A3A3A3]'
+                          ? 'bg-green-950/20 border-green-800/30 text-green-400 font-semibold'
+                          : 'bg-neutral-900 border-neutral-800 text-neutral-400'
                       }`}
                     >
                       {isWinner && <span>🏆</span>}
@@ -620,17 +729,17 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
 
       {/* Link Details Overlay */}
       {selectedLink && (
-        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#121212]/80 backdrop-blur-md border border-white/10 rounded-lg p-4 text-[#EFEFEF] shadow-xl pointer-events-auto transition-all">
-          <button onClick={() => setSelectedLink(null)} className="absolute top-3 right-3 text-white/50 hover:text-white transition-colors">✕</button>
+        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
+          <button onClick={() => setSelectedLink(null)} className="absolute top-3 right-3 text-neutral-500 hover:text-white transition-colors">✕</button>
 
-          <div className="text-[10px] uppercase tracking-wider text-[#0ea5e9] font-semibold mb-2">Connection Details</div>
+          <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold mb-3 border-b border-neutral-800 pb-1.5">Connection Details</div>
 
-          <div className="flex flex-col gap-1 mb-4 text-sm bg-white/5 p-2 rounded-md border border-white/5">
+          <div className="flex flex-col gap-1 mb-4 text-sm bg-neutral-900/50 p-2 border border-neutral-800">
             <div className="flex justify-between items-center text-center">
               <span className={`font-bold flex-1 truncate ${selectedLink.type === 'WON' ? 'text-[#4ade80]' : ''}`}>
                 {selectedLink.source.name || selectedLink.source}
               </span>
-              <span className="text-[10px] text-[#888] px-2 whitespace-nowrap">
+              <span className="text-[10px] text-neutral-500 px-2 whitespace-nowrap">
                 {selectedLink.type === 'DEFEATED' ? '🏆 DEFEATED' :
                  selectedLink.type === 'WON' ? '🏆 WON' :
                  selectedLink.type === 'LOST' ? '❌ LOST' :
@@ -646,22 +755,22 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           </div>
 
           {selectedLink.type !== 'MEMBER_OF' && (
-            <div className="space-y-3 text-xs text-[#A3A3A3]">
+            <div className="space-y-3 text-xs text-neutral-400">
               {selectedLink.battle_name && (
                 <div>
-                  <span className="block text-[9px] uppercase tracking-wider text-[#666]">Battle Name</span>
+                  <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Battle Name</span>
                   <span className="text-white font-medium">{selectedLink.battle_name}</span>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-y-3 gap-x-2">
-                {selectedLink.event_name && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Event</span><span className="text-[#EFEFEF]">{selectedLink.event_name} {selectedLink.year ? `('${String(selectedLink.year).slice(-2)})` : ''}</span></div>}
-                {selectedLink.match_format && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Format</span><span className="text-[#EFEFEF]">{FORMAT_LABELS[selectedLink.match_format] || selectedLink.match_format}</span></div>}
-                {selectedLink.match_type && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Type</span><span className="text-[#EFEFEF]">{MATCH_TYPE_LABELS[selectedLink.match_type] || selectedLink.match_type}</span></div>}
-                {selectedLink.view_count != null && <div><span className="block text-[9px] uppercase tracking-wider text-[#666]">Views</span><span className="text-[#EFEFEF]">{formatViews(selectedLink.view_count)}</span></div>}
+                {selectedLink.event_name && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Event</span><span className="text-neutral-200">{selectedLink.event_name} {selectedLink.year ? `('${String(selectedLink.year).slice(-2)})` : ''}</span></div>}
+                {selectedLink.match_format && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Format</span><span className="text-neutral-200">{FORMAT_LABELS[selectedLink.match_format] || selectedLink.match_format}</span></div>}
+                {selectedLink.match_type && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Type</span><span className="text-neutral-200">{MATCH_TYPE_LABELS[selectedLink.match_type] || selectedLink.match_type}</span></div>}
+                {selectedLink.view_count != null && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Views</span><span className="text-neutral-200">{formatViews(selectedLink.view_count)}</span></div>}
               </div>
               {battleParticipants.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-white/5">
-                  <span className="block text-[9px] uppercase tracking-wider text-[#666] mb-1.5">Participants</span>
+                <div className="mt-3 pt-3 border-t border-neutral-800">
+                  <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-1.5">Participants</span>
                   <div className="flex flex-wrap gap-1">
                     {battleParticipants.map(p => {
                       const winsLink = displayData.links.find(
@@ -676,10 +785,10 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
                       return (
                         <div
                           key={p.id}
-                          className={`text-[10px] px-2 py-0.5 rounded border flex items-center gap-1 ${
+                          className={`text-[10px] px-2 py-0.5 border flex items-center gap-1 ${
                             isWinner
-                              ? 'bg-green-950/30 border-green-500/30 text-green-400 font-semibold shadow-sm'
-                              : 'bg-white/5 border-white/5 text-[#A3A3A3]'
+                              ? 'bg-green-950/20 border-green-800/30 text-green-400 font-semibold'
+                              : 'bg-neutral-900 border-neutral-800 text-neutral-400'
                           }`}
                         >
                           {isWinner && <span>🏆</span>}
@@ -702,11 +811,11 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       {/* Control Panel */}
       <div className={`absolute z-[55] flex flex-col gap-2 transition-all w-64 pointer-events-auto md:top-4 md:right-4 ${isMobileMenuOpen ? 'bottom-20 left-6 opacity-100' : 'max-md:opacity-0 max-md:pointer-events-none'}`}>
 
-        <div ref={dropdownRef} className="flex bg-[#121212]/40 border border-white/10 rounded-md p-1 backdrop-blur-md items-center justify-between relative">
+        <div ref={dropdownRef} className="flex bg-[#0d0d0d] border border-neutral-800 p-1 items-center justify-between relative rounded-none">
           <div className="relative w-full flex-1">
             <button
               onClick={() => setIsFormatDropdownOpen(!isFormatDropdownOpen)}
-              className="w-full text-left bg-transparent text-[#A3A3A3] text-[10px] uppercase tracking-wider font-semibold py-1.5 px-2 rounded-sm hover:text-white hover:bg-white/5 flex justify-between items-center transition-all duration-200"
+              className="w-full text-left bg-transparent text-neutral-400 text-[10px] uppercase tracking-wider font-semibold py-1.5 px-2 rounded-none hover:text-white hover:bg-neutral-900 flex justify-between items-center transition-all duration-200"
             >
               <span>Matchup Formats ({selectedFormats.length})</span>
               <svg className={`w-3 h-3 transition-transform duration-200 ${isFormatDropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -715,12 +824,12 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
             </button>
 
             {isFormatDropdownOpen && (
-              <div className="absolute left-0 right-0 mt-2 z-[70] bg-[#121212]/95 backdrop-blur-md border border-white/10 rounded-md p-2 flex flex-col gap-1.5 shadow-2xl max-h-48 overflow-y-auto">
+              <div className="absolute left-0 right-0 mt-2 z-[70] bg-[#0d0d0d] border border-neutral-800 rounded-none p-2 flex flex-col gap-1.5 shadow-2xl max-h-48 overflow-y-auto">
                 {Object.keys(FORMAT_LABELS).map(formatKey => {
                   const label = FORMAT_LABELS[formatKey];
                   const isChecked = selectedFormats.includes(formatKey);
                   return (
-                    <label key={formatKey} className="flex items-center gap-2.5 text-xs text-[#A3A3A3] hover:text-white cursor-pointer select-none py-1 px-1.5 rounded-sm hover:bg-white/5 transition-all">
+                    <label key={formatKey} className="flex items-center gap-2.5 text-xs text-neutral-400 hover:text-white cursor-pointer select-none py-1 px-1.5 rounded-none hover:bg-neutral-900 transition-all">
                       <input
                         type="checkbox"
                         checked={isChecked}
@@ -731,7 +840,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
                             setSelectedFormats([...selectedFormats, formatKey]);
                           }
                         }}
-                        className="accent-[#0ea5e9] rounded border-white/10 bg-white/5 w-3.5 h-3.5"
+                        className="accent-neutral-500 rounded-none border-neutral-800 bg-neutral-900 w-3.5 h-3.5"
                       />
                       <span>{label}</span>
                     </label>
@@ -743,7 +852,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           <button
             onClick={() => setShowLabels(!showLabels)}
             title={showLabels ? "Hide Node Labels" : "Show Node Labels"}
-            className="ml-1 p-1.5 text-[#888] hover:text-white hover:bg-white/10 rounded-sm transition-all flex items-center justify-center shrink-0"
+            className="ml-1 p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-900 rounded-none transition-all flex items-center justify-center shrink-0"
           >
             {showLabels ? (
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" /><circle cx="12" cy="12" r="3" /></svg>
@@ -754,27 +863,37 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         </div>
 
         <div className='flex gap-2'>
-          <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs w-32 outline-none">
+          <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="bg-[#0d0d0d] text-neutral-400 border border-neutral-800 rounded-none px-3 py-2 text-xs w-32 outline-none focus:border-neutral-700 hover:bg-neutral-900">
             <option value="All">All Years</option>
             {availableYears.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
-          <select value={selectedMatchType} onChange={(e) => setSelectedMatchType(e.target.value)} className="bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs w-32 outline-none">
+          <select value={selectedMatchType} onChange={(e) => setSelectedMatchType(e.target.value)} className="bg-[#0d0d0d] text-neutral-400 border border-neutral-800 rounded-none px-3 py-2 text-xs w-32 outline-none focus:border-neutral-700 hover:bg-neutral-900">
             <option value="All">All Types</option>
             {availableMatchTypes.map(t => <option key={t} value={t}>{MATCH_TYPE_LABELS[t] || t}</option>)}
           </select>
         </div>
 
-        <select value={sizeBasis} onChange={(e) => setSizeBasis(e.target.value as 'battles' | 'views')} className="w-full bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs outline-none hover:text-[#EFEFEF] transition-colors">
+        <select value={sizeBasis} onChange={(e) => setSizeBasis(e.target.value as 'battles' | 'views')} className="w-full bg-[#0d0d0d] text-neutral-400 border border-neutral-800 rounded-none px-3 py-2 text-xs outline-none focus:border-neutral-700 hover:bg-neutral-900 transition-colors">
           <option value="battles">Node Size: Total Battles</option>
           <option value="views">Node Size: Total Views</option>
         </select>
 
-        <input type="text" placeholder="Search Emcee or Team..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#121212]/30 text-[#A3A3A3] border border-white/5 rounded-md px-3 py-2 text-xs outline-none" />
+        <label className="flex items-center gap-2 text-xs text-neutral-400 hover:text-white cursor-pointer select-none py-1.5 px-3 bg-[#0d0d0d] border border-neutral-800 rounded-none w-full transition-colors">
+          <input
+            type="checkbox"
+            checked={officialOnly}
+            onChange={(e) => setOfficialOnly(e.target.checked)}
+            className="accent-neutral-500 rounded-none border-neutral-800 bg-neutral-900 w-3.5 h-3.5"
+          />
+          <span>Official Records Only</span>
+        </label>
 
-        <div className="bg-[#121212]/20 border border-white/5 rounded-md flex flex-col max-h-[300px]">
-          <div className="px-3 py-1.5 border-b border-white/5 flex justify-between items-center shrink-0">
-            <span className="text-xs text-[#A3A3A3] font-semibold">Combatants ({filteredEmceesList.length})</span>
-            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-transparent text-[#A3A3A3] border border-white/5 rounded-md px-2 py-0.5 text-[10px] w-24 outline-none">
+        <input type="text" placeholder="Search Emcee or Team..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-[#0d0d0d] text-neutral-200 placeholder-neutral-600 border border-neutral-800 rounded-none px-3 py-2 text-xs outline-none focus:border-neutral-700" />
+
+        <div className="bg-[#0d0d0d] border border-neutral-800 rounded-none flex flex-col max-h-[300px]">
+          <div className="px-3 py-1.5 border-b border-neutral-800 flex justify-between items-center shrink-0">
+            <span className="text-xs text-neutral-500 font-semibold">Combatants ({filteredEmceesList.length})</span>
+            <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} className="bg-transparent text-neutral-400 border border-neutral-800 rounded-none px-2 py-0.5 text-[10px] w-24 outline-none hover:bg-neutral-900 focus:border-neutral-700">
               <option value="name">Sort: Name</option>
               <option value="winRate">Sort: Win Rate</option>
               <option value="views">Sort: Views</option>
@@ -782,16 +901,15 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
               <option value="losses">Sort: Losses</option>
             </select>
           </div>
-          <div className="overflow-y-auto flex-1 divide-y divide-white/[0.03]">
+          <div className="overflow-y-auto flex-1 divide-y divide-neutral-900 custom-scrollbar">
             {filteredEmceesList.map(node => {
               const rate = nodeStats[node.id]?.winRate ?? 0.5;
-              const metricStyle = sortBy === 'winRate' || sortBy === 'name' ? { color: getWinRateColor(rate) } : { color: '#A3A3A3' };
               return (
-                <button key={node.id} onClick={() => handleSearchSelect(node)} className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 ${selectedNodeId === node.id ? 'bg-white/[0.07] text-[#EFEFEF]' : 'text-[#A3A3A3] hover:bg-white/[0.03]'}`}>
+                <button key={node.id} onClick={() => handleSearchSelect(node)} className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 rounded-none transition-colors border-none ${selectedNodeId === node.id ? 'bg-neutral-900 text-white border-l-2 border-neutral-400' : 'text-neutral-400 hover:bg-neutral-900/50'}`}>
                   {node.avatar_url ? (
                     <Image src={node.avatar_url} alt={node.name} width={20} height={20} className="w-5 h-5 rounded-full object-cover shrink-0" />
                   ) : (
-                    <div className={`w-5 h-5 bg-white/[0.05] border border-white/5 flex items-center justify-center text-[9px] shrink-0 ${node.group === 'Team' ? 'rounded-md' : 'rounded-full'}`}>
+                    <div className={`w-5 h-5 bg-neutral-900 border border-neutral-800 flex items-center justify-center text-[9px] shrink-0 rounded-none text-neutral-400`}>
                       {node.name.charAt(0).toUpperCase()}
                     </div>
                   )}
@@ -804,40 +922,40 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
       </div>
 
       {/* Map Legend */}
-      <div className="absolute bottom-6 left-6 z-[55] pointer-events-none hidden md:flex flex-col gap-3 bg-[#121212]/30 backdrop-blur-md border border-white/5 rounded-md p-3">
-        <span className="text-[10px] text-[#A3A3A3] uppercase tracking-wider font-semibold">Legend</span>
+      <div className="absolute bottom-6 left-6 z-[55] pointer-events-none hidden md:flex flex-col gap-3 bg-[#0d0d0d] border border-neutral-800 rounded-none p-3 shadow-2xl">
+        <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold border-b border-neutral-800 pb-1">Legend</span>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-[10px] text-[#888]">Win Rate</span>
-          <div className="w-full h-1.5 rounded-full bg-gradient-to-r from-[#f87171] via-[#facc15] to-[#4ade80]"></div>
-          <div className="flex justify-between text-[9px] text-[#666]">
+          <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold">Win Rate</span>
+          <div className="w-full h-1 bg-gradient-to-r from-[#f87171] via-[#facc15] to-[#4ade80] rounded-none"></div>
+          <div className="flex justify-between text-[9px] text-neutral-600">
             <span>Low</span><span>Avg</span><span>High</span>
           </div>
         </div>
 
         <div className="flex flex-col gap-1.5 mt-1">
-          <div className="flex items-center gap-2 text-[10px] text-[#888]">
-            <div className="w-2 h-2 rounded-full border border-white/20"></div> Individual Emcee
+          <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+            <div className="w-2 h-2 rounded-full border border-neutral-700"></div> Individual Emcee
           </div>
           {selectedFormats.some(f => f !== '1v1') && (
             <>
-              <div className="flex items-center gap-2 text-[10px] text-[#888]">
-                <div className="w-2 h-2 rounded-sm border border-white/20"></div> Team
+              <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+                <div className="w-2 h-2 rounded-none border border-neutral-700"></div> Team
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-[#888]">
+              <div className="flex items-center gap-2 text-[10px] text-neutral-400">
                 <div className="w-3 h-0.5 bg-[#0ea5e9]"></div> Member Of Team
               </div>
-              <div className="flex items-center gap-2 text-[10px] text-[#888]">
+              <div className="flex items-center gap-2 text-[10px] text-neutral-400">
                 <div className="w-3 h-0.5 bg-[#8b5cf6]"></div> Multi-Participant (2v2, 3way, etc.)
               </div>
             </>
           )}
-          <div className="flex items-center gap-2 text-[10px] text-[#888]">
+          <div className="flex items-center gap-2 text-[10px] text-neutral-400">
             <div className="w-3 h-0.5 bg-[#b59210]"></div> Tournament Battle
           </div>
           {(selectedFormats.includes('royal_rumble') || selectedFormats.includes('3way')) && (
-            <div className="flex items-center gap-2 text-[10px] text-[#888]">
-              <div className="w-2.5 h-2.5 bg-[#eab308] border border-[#eab308]/20 rounded-[3px] rotate-45 shrink-0"></div> Royal Rumble / 3-Way Battle
+            <div className="flex items-center gap-2 text-[10px] text-neutral-400">
+              <div className="w-2.5 h-2.5 bg-[#eab308] border border-[#eab308]/20 rounded-none rotate-45 shrink-0"></div> Royal Rumble / 3-Way Battle
             </div>
           )}
         </div>
@@ -849,9 +967,10 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         height={dimensions.height}
         graphData={displayData}
 
-        nodeLabel={emptyNodeLabel}
+        nodeLabel={handleNodeLabel}
 
         onNodeClick={handleSearchSelect}
+        onNodeHover={(node: any) => setHoveredNodeId(node ? node.id : null)}
         onBackgroundClick={() => {
           setSelectedNodeId(null);
           setSelectedLink(null);

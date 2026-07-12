@@ -20,45 +20,50 @@ export async function fetchGraphDataForVisualization() {
   try {
     // 1. Fetch Nodes (Distinguishing individual Emcees vs Teams vs Events)
     const nodesRes = await session.run(`
-      MATCH (n) 
-      WHERE n:Emcee OR n:Event
+      MATCH (n:Emcee)
       OPTIONAL MATCH (n)-[r:DEFEATED|BATTLED]-()
       WITH n, count(r) AS battleCount
       RETURN n.id AS id, 
-             CASE 
-               WHEN n:Event THEN 'Event'
-               WHEN n:Team THEN 'Team'
-               ELSE 'Emcee'
-             END AS group, 
-             COALESCE(n.stage_name, n.event_name, 'Unknown') AS name, 
+             CASE WHEN n:Team THEN 'Team' ELSE 'Emcee' END AS group, 
+             COALESCE(n.stage_name, 'Unknown') AS name, 
              n.hometown AS hometown,
              n.total_views AS total_views,
              n.avatar_url AS avatar_url,
              battleCount
+      UNION ALL
+      MATCH (n:Event)
+      RETURN n.id AS id, 
+             'Event' AS group, 
+             COALESCE(n.event_name, 'Unknown') AS name, 
+             null AS hometown,
+             null AS total_views,
+             null AS avatar_url,
+             0 AS battleCount
     `);
 
     // 2. Fetch Links (Battles, Event Attendances, and Team Memberships)
     const linksRes = await session.run(`
       /* Arm 1: Combat relationships (Who fought/defeated whom) */
-      MATCH (source:Emcee)-[r]->(target:Emcee)
+      MATCH (source:Emcee)-[r:DEFEATED|BATTLED]->(target:Emcee)
       WHERE type(r) = 'DEFEATED' OR (type(r) = 'BATTLED' AND source.id < target.id)
       MATCH (b:Battle {id: r.battle_id})
       OPTIONAL MATCH (b)-[:HELD_AT]->(ev:Event)
-      RETURN source.id AS source, target.id AS target, type(r) AS type, ev.year AS year, b.match_type AS match_type, b.match_format AS match_format, b.name AS battle_name, b.view_count AS view_count, ev.event_name AS event_name, b.id AS battle_id
+      RETURN source.id AS source, target.id AS target, type(r) AS type, ev.year AS year, 
+             CASE WHEN b.is_promo THEN 'promo' WHEN b.is_tryout THEN 'tryout' ELSE 'regular' END AS match_type, 
+             b.match_format AS match_format, b.name AS battle_name, b.view_count AS view_count, ev.event_name AS event_name, b.id AS battle_id, b.winner AS winner
 
       UNION
 
       /* Arm 2: Attendance relationships (Emcees/Teams attending an Event) */
-      MATCH (source:Emcee)-[r]-(:Emcee)
-      WHERE type(r) IN ['DEFEATED', 'BATTLED']
+      MATCH (source:Emcee)-[r:DEFEATED|BATTLED]-(:Emcee)
       MATCH (b:Battle {id: r.battle_id})-[:HELD_AT]->(target:Event)
-      RETURN DISTINCT source.id AS source, target.id AS target, 'ATTENDED' AS type, target.year AS year, null AS match_type, null AS match_format, null AS battle_name, null AS view_count, null AS event_name, b.id AS battle_id
+      RETURN DISTINCT source.id AS source, target.id AS target, 'ATTENDED' AS type, target.year AS year, null AS match_type, null AS match_format, null AS battle_name, null AS view_count, null AS event_name, b.id AS battle_id, null AS winner
 
       UNION
 
       /* Arm 3: Team Structure (Which individual Emcees belong to which Team node) */
       MATCH (source:Emcee)-[r:MEMBER_OF]->(target:Team)
-      RETURN source.id AS source, target.id AS target, 'MEMBER_OF' AS type, null AS year, null AS match_type, null AS match_format, null AS battle_name, null AS view_count, null AS event_name, null AS battle_id
+      RETURN source.id AS source, target.id AS target, 'MEMBER_OF' AS type, null AS year, null AS match_type, null AS match_format, null AS battle_name, null AS view_count, null AS event_name, null AS battle_id, null AS winner
     `);
 
     // 3. Process Nodes
@@ -101,7 +106,8 @@ export async function fetchGraphDataForVisualization() {
         battle_name: rec.get('battle_name') || null,
         view_count: viewRaw != null ? (viewRaw.toNumber ? viewRaw.toNumber() : Number(viewRaw)) : null,
         event_name: rec.get('event_name') || null,
-        battle_id: rec.get('battle_id') || null
+        battle_id: rec.get('battle_id') || null,
+        winner: rec.get('winner') || null
       };
     });
 
