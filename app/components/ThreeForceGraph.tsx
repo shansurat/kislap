@@ -307,19 +307,16 @@ function ThreeForceGraphComponent({
           let basisVal = 0;
           if (state.sizeBasis === 'views') {
             basisVal = node.total_views ?? 0;
-            // Map 0 to 450M views smoothly on a 0.35 power curve from 1.5 to 8.5
-            targetScale = Math.max(1.5, Math.min(8.5, 1.5 + Math.pow(basisVal / 450000000, 0.35) * 7.0));
+            // Map 0 to 300M views on a steeper curve up to size 12.0 to make differences more obvious
+            targetScale = Math.max(1.0, Math.min(12.0, 1.0 + Math.pow(basisVal / 300000000, 0.4) * 11.0));
           } else {
             basisVal = node.battleCount ?? 0;
-            // Map 0 to 45 battles smoothly on a square root curve from 1.5 to 8.5
-            targetScale = Math.max(1.5, Math.min(8.5, 1.5 + Math.sqrt(basisVal / 45) * 7.0));
+            // Map 0 to 40 battles on a steeper curve up to size 12.0 to make differences more obvious
+            targetScale = Math.max(1.0, Math.min(12.0, 1.0 + Math.pow(basisVal / 40, 0.6) * 11.0));
           }
         }
 
-        if (state.selectedNodeId) {
-          if (isCenter) targetScale *= 1.35;
-          else if (!isHighlighted) targetScale *= 0.65;
-        }
+
 
         const currentScale = mesh.scale.x;
         if (Math.abs(currentScale - targetScale) > 0.01) {
