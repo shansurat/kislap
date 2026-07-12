@@ -50,6 +50,16 @@ const getViewsColor = (views: number) => {
   }
 };
 
+const getBattlesColor = (battles: number) => {
+  // Map 0 to 40 battles smoothly using the same power curve
+  const t = Math.min(1, Math.pow(battles / 40, 0.6));
+  if (t < 0.5) {
+    return interpolateHex('#38bdf8', '#eab308', t * 2);
+  } else {
+    return interpolateHex('#eab308', '#f43f5e', (t - 0.5) * 2);
+  }
+};
+
 const getWinRateColor = (rate: number) => {
   let h, s, l;
   if (rate < 0.5) {
@@ -89,7 +99,7 @@ interface ThreeForceGraphProps {
   hoveredLink: any | null;
   showLabels: boolean;
   sizeBasis: 'battles' | 'views';
-  colorMode: 'group' | 'winRate' | 'views';
+  colorMode: 'group' | 'winRate' | 'views' | 'battles';
   linkColorMode: 'relation' | 'battle_type' | 'format';
   nodeStats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }>;
   highlightNodes: Set<string>;
@@ -333,11 +343,13 @@ function ThreeForceGraphComponent({
           else if (node.group === 'Battle') targetColorStr = '#eab308';
           else if (node.group === 'Team') targetColorStr = '#38bdf8';
           else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
+          else if (state.colorMode === 'battles') targetColorStr = getBattlesColor(node.battleCount ?? 0);
           else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         } else {
           if (node.group === 'Battle') targetColorStr = '#eab308';
           else if (node.group === 'Team') targetColorStr = '#38bdf8';
           else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
+          else if (state.colorMode === 'battles') targetColorStr = getBattlesColor(node.battleCount ?? 0);
           else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         }
 

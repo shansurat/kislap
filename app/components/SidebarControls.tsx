@@ -43,8 +43,8 @@ interface SidebarControlsProps {
   setOfficialOnly: (official: boolean) => void;
   sizeBasis: 'battles' | 'views';
   setSizeBasis: (basis: 'battles' | 'views') => void;
-  colorMode: 'group' | 'winRate' | 'views';
-  setColorMode: (mode: 'group' | 'winRate' | 'views') => void;
+  colorMode: 'group' | 'winRate' | 'views' | 'battles';
+  setColorMode: (mode: 'group' | 'winRate' | 'views' | 'battles') => void;
   linkColorMode: 'relation' | 'battle_type' | 'format';
   setLinkColorMode: (mode: 'relation' | 'battle_type' | 'format') => void;
   showLabels: boolean;
@@ -181,19 +181,23 @@ export function SidebarControls({
         
         <div>
           <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-1.5 font-semibold">Node Color Mode</span>
-          <div className="flex gap-1 bg-neutral-950 p-1 border border-neutral-800 rounded-none">
+          <div className="flex gap-1 bg-neutral-950 p-1 border border-neutral-800 rounded-none flex-wrap">
             <button 
               onClick={() => setColorMode('winRate')}
-              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'winRate' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 px-1 transition-colors ${colorMode === 'winRate' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
             >Win Rate</button>
             <button 
               onClick={() => setColorMode('group')}
-              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'group' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
-            >Entity Group</button>
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 px-1 transition-colors ${colorMode === 'group' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Group</button>
             <button 
               onClick={() => setColorMode('views')}
-              className={`flex-1 text-[10px] uppercase font-semibold py-1 transition-colors ${colorMode === 'views' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 px-1 transition-colors ${colorMode === 'views' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
             >Views</button>
+            <button 
+              onClick={() => setColorMode('battles')}
+              className={`flex-1 text-[10px] uppercase font-semibold py-1 px-1 transition-colors ${colorMode === 'battles' ? 'bg-neutral-800 text-white' : 'text-neutral-500 hover:text-neutral-300'}`}
+            >Battles</button>
           </div>
         </div>
 
