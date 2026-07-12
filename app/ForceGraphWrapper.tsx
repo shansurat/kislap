@@ -112,6 +112,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         // Find all neighbor nodes
         const directNeighbors = new Set<string>();
         const battleHubs = new Set<string>();
+        const teamIds = new Set<string>();
 
         // First pass: find direct neighbors
         displayData.links.forEach(l => {
@@ -120,14 +121,36 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           
           if (sId === node.id) {
             directNeighbors.add(tId);
-            if (displayData.nodes.find(n => n.id === tId)?.group === 'Battle') battleHubs.add(tId);
+            const targetGroup = displayData.nodes.find(n => n.id === tId)?.group;
+            if (targetGroup === 'Battle') battleHubs.add(tId);
+            if (targetGroup === 'Team' && l.type === 'MEMBER_OF') teamIds.add(tId);
           } else if (tId === node.id) {
             directNeighbors.add(sId);
-            if (displayData.nodes.find(n => n.id === sId)?.group === 'Battle') battleHubs.add(sId);
+            const sourceGroup = displayData.nodes.find(n => n.id === sId)?.group;
+            if (sourceGroup === 'Battle') battleHubs.add(sId);
+            if (sourceGroup === 'Team' && l.type === 'MEMBER_OF') teamIds.add(sId);
           }
         });
 
-        // Second pass: find participants of the Battle Hubs
+        // Second pass: if the selected node belongs to Teams, add the Teams' battles and opponent nodes
+        if (teamIds.size > 0) {
+          displayData.links.forEach(l => {
+            if (l.type === 'MEMBER_OF') return; // Do not traverse the opponent team's members, nor our own
+            
+            const sId = typeof l.source === 'object' ? l.source.id : l.source;
+            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            
+            if (teamIds.has(sId)) {
+              directNeighbors.add(tId);
+              if (displayData.nodes.find(n => n.id === tId)?.group === 'Battle') battleHubs.add(tId);
+            } else if (teamIds.has(tId)) {
+              directNeighbors.add(sId);
+              if (displayData.nodes.find(n => n.id === sId)?.group === 'Battle') battleHubs.add(sId);
+            }
+          });
+        }
+
+        // Third pass: find participants of the Battle Hubs
         if (battleHubs.size > 0) {
           displayData.links.forEach(l => {
             const sId = typeof l.source === 'object' ? l.source.id : l.source;

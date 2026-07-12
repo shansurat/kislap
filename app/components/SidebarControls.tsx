@@ -4,8 +4,7 @@ import { renderStyledName } from '../utils/helpers';
 import { GraphNode } from '../hooks/useGraphData';
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
-  tournament: 'Tournament',
-  non_tournament_judged: 'Non-Tournament',
+  regular: 'Regular Battle',
   promo: 'Promo',
   tryout: 'Tryout',
 };

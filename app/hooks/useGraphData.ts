@@ -70,7 +70,7 @@ export function useGraphData({
   const availableMatchTypes = useMemo(() => {
     const types = new Set<string>();
     graphData.links.forEach(link => {
-      if (link.match_type && ['tournament', 'non_tournament_judged'].includes(link.match_type)) types.add(link.match_type);
+      if (link.match_type && ['regular', 'promo', 'tryout'].includes(link.match_type)) types.add(link.match_type);
     });
     return Array.from(types).sort();
   }, [graphData]);
@@ -80,8 +80,6 @@ export function useGraphData({
     let initialLinks = graphData.links.filter(link => {
       if (link.type === 'MEMBER_OF') return true;
       
-      if (link.match_type === 'tryout' || link.match_type === 'promo') return false;
-
       if (officialOnly) {
         const winners = link.winner || [];
         const isUnjudged = winners.includes('Unjudged');
@@ -389,8 +387,9 @@ export function useGraphData({
       hNodes.add(selectedNodeId);
       
       const hubIds = new Set<string>();
+      const teamIds = new Set<string>();
 
-      // First pass: find direct neighbors and collect any Battle Hubs
+      // First pass: find direct neighbors and collect any Battle Hubs and Team Hubs
       displayData.links.forEach(link => {
         const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
         const targetId = typeof link.target === 'object' ? link.target.id : link.target;
@@ -398,16 +397,40 @@ export function useGraphData({
         if (sourceId === selectedNodeId) { 
           hLinks.add(link); 
           hNodes.add(targetId); 
-          if (displayData.nodes.find(n => n.id === targetId)?.group === 'Battle') hubIds.add(targetId);
+          const targetGroup = displayData.nodes.find(n => n.id === targetId)?.group;
+          if (targetGroup === 'Battle') hubIds.add(targetId);
+          if (targetGroup === 'Team' && link.type === 'MEMBER_OF') teamIds.add(targetId);
         }
         else if (targetId === selectedNodeId) { 
           hLinks.add(link); 
           hNodes.add(sourceId); 
-          if (displayData.nodes.find(n => n.id === sourceId)?.group === 'Battle') hubIds.add(sourceId);
+          const sourceGroup = displayData.nodes.find(n => n.id === sourceId)?.group;
+          if (sourceGroup === 'Battle') hubIds.add(sourceId);
+          if (sourceGroup === 'Team' && link.type === 'MEMBER_OF') teamIds.add(sourceId);
         }
       });
 
-      // Second pass: if we found Battle Hubs, expand to all participants in those battles
+      // Second pass: if the selected node belongs to Teams, highlight the Teams' battles and opponent nodes (but not individual opponents)
+      if (teamIds.size > 0) {
+        displayData.links.forEach(link => {
+          if (link.type === 'MEMBER_OF') return; // Do not traverse the opponent team's members, nor our own
+          
+          const sourceId = typeof link.source === 'object' ? link.source.id : link.source;
+          const targetId = typeof link.target === 'object' ? link.target.id : link.target;
+          
+          if (teamIds.has(sourceId)) {
+            hLinks.add(link);
+            hNodes.add(targetId);
+            if (displayData.nodes.find(n => n.id === targetId)?.group === 'Battle') hubIds.add(targetId);
+          } else if (teamIds.has(targetId)) {
+            hLinks.add(link);
+            hNodes.add(sourceId);
+            if (displayData.nodes.find(n => n.id === sourceId)?.group === 'Battle') hubIds.add(sourceId);
+          }
+        });
+      }
+
+      // Third pass: if we found Battle Hubs (directly or via Team), expand to all participants in those battles
       if (hubIds.size > 0) {
         displayData.links.forEach(link => {
           const sourceId = typeof link.source === 'object' ? link.source.id : link.source;

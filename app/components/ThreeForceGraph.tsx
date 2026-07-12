@@ -279,7 +279,7 @@ function ThreeForceGraphComponent({
         if (mesh.material) {
           const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
           if (mat) {
-            if (targetDepthTest === false && (mat === BATTLE_MATERIAL || mat === TEAM_MATERIAL)) {
+            if (targetDepthTest === false && mat === BATTLE_MATERIAL) {
               mesh.material = mat.clone();
             }
             const activeMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
@@ -330,22 +330,22 @@ function ThreeForceGraphComponent({
 
         // Node styling colors
         let targetColorStr = '#ffffff';
-        if (node.group === 'Battle') {
-          targetColorStr = '#eab308';
-        } else if (node.group === 'Team') {
-          targetColorStr = '#38bdf8';
-        } else if (state.selectedNodeId) {
+        if (state.selectedNodeId) {
           if (isCenter) targetColorStr = '#FFFFFF';
           else if (!isHighlighted) targetColorStr = '#333333';
+          else if (node.group === 'Battle') targetColorStr = '#eab308';
+          else if (node.group === 'Team') targetColorStr = '#38bdf8';
           else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
           else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         } else {
-          if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
+          if (node.group === 'Battle') targetColorStr = '#eab308';
+          else if (node.group === 'Team') targetColorStr = '#38bdf8';
+          else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
           else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
         }
 
-        // Only modify materials for non-shared nodes (like Emcees)
-        if (node.group !== 'Battle' && node.group !== 'Team' && mesh.userData.currentColor !== targetColorStr) {
+        // Only modify materials for non-shared nodes (like Emcees and Teams)
+        if (node.group !== 'Battle' && mesh.userData.currentColor !== targetColorStr) {
           (mesh.material as THREE.MeshLambertMaterial).color.set(targetColorStr);
           mesh.userData.currentColor = targetColorStr;
           needsNextFrame = true;
@@ -522,7 +522,11 @@ function ThreeForceGraphComponent({
     } else if (node.group === 'Team') {
       geometry = SHARED_DODECAHEDRON_GEOMETRY;
       color = '#38bdf8';
-      material = TEAM_MATERIAL;
+      material = new THREE.MeshLambertMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+      });
     } else {
       material = new THREE.MeshLambertMaterial({
         color,
