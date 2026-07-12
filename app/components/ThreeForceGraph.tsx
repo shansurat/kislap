@@ -364,31 +364,34 @@ function ThreeForceGraphComponent({
         const nodeHeight = targetScale;
         let targetVisible = false;
         let tgtColor = '#e5e5e5';
-        let tgtHeight = 3.5;
+        let tgtHeight = 4.5;
         let targetY = nodeHeight + 2.8;
         let targetOpacity = 0.7;
 
         if (state.selectedNodeId) {
-          // Clamp size scaling past distance 800
-          const clampedDistanceScale = Math.min(distance / 400, 800 / 400);
+          // Use a soft power curve instead of linear multiplier to prevent massive text overlap
+          // At distance 400, scale is 1.0. At distance 1600, scale is only ~1.58 instead of 4.0
+          const distanceScale = Math.max(1.0, Math.pow(distance / 400, 0.5));
           
-          // Fade opacity out linearly from distance 1000 to 1800
-          let distanceOpacity = 1.0;
-          if (distance > 1000) {
-            distanceOpacity = Math.max(0, 1.0 - (distance - 1000) / 800);
-          }
-
           if (isCenter) {
+            // Center node fades out very late
+            let distanceOpacity = 1.0;
+            if (distance > 1500) distanceOpacity = Math.max(0, 1.0 - (distance - 1500) / 500);
+            
             targetVisible = distanceOpacity > 0;
             tgtColor = '#ffffff';
-            tgtHeight = 7.5 * clampedDistanceScale;
-            targetY = (nodeHeight + 6.0) * clampedDistanceScale;
+            tgtHeight = 6.0 * distanceScale;
+            targetY = nodeHeight + (3.5 * distanceScale);
             targetOpacity = distanceOpacity;
           } else if (isHighlighted) {
+            // Highlighted opponents fade out much sooner to prevent clutter
+            let distanceOpacity = 1.0;
+            if (distance > 600) distanceOpacity = Math.max(0, 1.0 - (distance - 600) / 600);
+            
             targetVisible = distanceOpacity > 0;
             tgtColor = '#ffffff';
-            tgtHeight = 5.5 * clampedDistanceScale;
-            targetY = (nodeHeight + 4.5) * clampedDistanceScale;
+            tgtHeight = 4.0 * distanceScale;
+            targetY = nodeHeight + (2.5 * distanceScale);
             targetOpacity = 0.85 * distanceOpacity;
           }
         } else {
