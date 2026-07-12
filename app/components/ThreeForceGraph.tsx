@@ -105,13 +105,44 @@ function ThreeForceGraphComponent({
 }: ThreeForceGraphProps) {
 
   // --- LIVE STATE REF ---
-  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId });
+  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId });
   useEffect(() => {
-    graphState.current = { selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId };
-  }, [selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId]);
+    graphState.current = { selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId };
+  }, [selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId]);
 
   // Flat array of active node groups to avoid full scene traversal
   const nodeGroupsRef = useRef<THREE.Group[]>([]);
+
+  // Clear array on data change to remove stale node groups
+  useEffect(() => {
+    nodeGroupsRef.current = [];
+    linkGroupRef.current = null;
+  }, [displayData]);
+
+  // Cache link group reference
+  const linkGroupRef = useRef<THREE.Group | null>(null);
+
+  // Helper to find the group containing all link lines in the Three.js scene without traversing
+  const getLinkGroup = useCallback((): THREE.Group | null => {
+    if (linkGroupRef.current) return linkGroupRef.current;
+    
+    // Find the first active node group
+    const activeNodeGroup = nodeGroupsRef.current.find(obj => obj.parent !== null);
+    if (!activeNodeGroup) return null;
+    
+    const nodeGroup = activeNodeGroup.parent;
+    const graphScene = nodeGroup?.parent;
+    if (!graphScene) return null;
+    
+    // The linkGroup is the sibling of nodeGroup in graphScene.children
+    const foundGroup = graphScene.children.find(child => child !== nodeGroup && child.type === 'Group') as THREE.Group | undefined;
+    if (foundGroup) {
+      linkGroupRef.current = foundGroup;
+      return foundGroup;
+    }
+    
+    return null;
+  }, []);
   
   // Track camera state to detect motion and pause/resume animation frames
   const lastCameraState = useRef({
@@ -138,7 +169,7 @@ function ThreeForceGraphComponent({
       const state = graphState.current;
       const camPos = camera.position;
       const camQuat = camera.quaternion;
-      const VIS_DIST_SQ = 650 * 650;
+      const VIS_DIST_SQ = 1100 * 1100; // Increased visibility threshold from 650
 
       let needsNextFrame = false;
 
@@ -153,10 +184,28 @@ function ThreeForceGraphComponent({
         needsNextFrame = true;
       }
 
-      // Filter out stale node groups
-      nodeGroupsRef.current = nodeGroupsRef.current.filter(obj => obj.parent !== null);
+      // Subgraph Foregrounding for Links
+      const linkGroup = getLinkGroup();
+      if (linkGroup) {
+        linkGroup.children.forEach((obj: any) => {
+          const link = obj.__data;
+          if (!link) return;
+          
+          let targetRenderOrder = 0;
+          if (state.selectedNodeId) {
+            targetRenderOrder = state.highlightLinks.has(link) ? 10 : 0;
+          }
+          
+          if (obj.renderOrder !== targetRenderOrder) {
+            obj.renderOrder = targetRenderOrder;
+            needsNextFrame = true;
+          }
+        });
+      }
 
       nodeGroupsRef.current.forEach((obj) => {
+        if (obj.parent === null) return; // Skip unattached nodes, three-forcegraph will attach them shortly
+
         const sprite = obj.getObjectByName('node-label') as SpriteText | undefined;
         const mesh = obj.getObjectByName('node-mesh') as THREE.Mesh | undefined;
         const node = obj.userData.node;
@@ -165,6 +214,17 @@ function ThreeForceGraphComponent({
 
         const isCenter = state.selectedNodeId === node.id;
         const isHighlighted = state.highlightNodes.has(node.id);
+
+        // Handle Render Order for Subgraph Foregrounding
+        let targetRenderOrder = 0;
+        if (state.selectedNodeId) {
+          targetRenderOrder = (isCenter || isHighlighted) ? 20 : 0;
+        }
+        if (obj.renderOrder !== targetRenderOrder) {
+          obj.renderOrder = targetRenderOrder;
+          mesh.renderOrder = targetRenderOrder;
+          needsNextFrame = true;
+        }
 
         // Scale node geometry
         let targetScale = 1.0;
@@ -225,22 +285,24 @@ function ThreeForceGraphComponent({
 
         const nodeHeight = targetScale;
         let targetVisible = false;
-        let tgtColor = 'rgba(255, 255, 255, 0.7)';
-        let tgtHeight = 2.5;
-        let targetY = nodeHeight + 2.0;
-        let targetOpacity = 1;
+        let tgtColor = '#e5e5e5';
+        let tgtHeight = 3.5; // Increased default size from 2.5
+        let targetY = nodeHeight + 2.8; // Adjusted vertical offset to prevent node overlapping
+        let targetOpacity = 0.7;
 
         if (state.selectedNodeId) {
           if (isCenter) {
             targetVisible = true;
             tgtColor = '#ffffff';
-            tgtHeight = 3.6;
-            targetY = nodeHeight + 3.0;
+            tgtHeight = 4.8; // Increased selected size from 3.6
+            targetY = nodeHeight + 4.0;
+            targetOpacity = 1.0;
           } else if (isHighlighted) {
             targetVisible = true;
-            tgtColor = 'rgba(255, 255, 255, 0.85)';
-            tgtHeight = 2.8;
-            targetY = nodeHeight + 2.0;
+            tgtColor = '#ffffff';
+            tgtHeight = 3.8; // Increased highlighted size from 2.8
+            targetY = nodeHeight + 3.0;
+            targetOpacity = 0.85;
           }
         } else {
           const distSq = camPos.distanceToSquared(obj.position);
@@ -248,10 +310,11 @@ function ThreeForceGraphComponent({
             targetVisible = true;
             if (state.hoveredNodeId === node.id) {
               tgtColor = '#ffffff';
+              targetOpacity = 1.0;
             } else {
               const distance = Math.sqrt(distSq);
-              targetOpacity = Math.max(0, Math.min(1, (650 - distance) / 250));
-              tgtColor = `rgba(229, 229, 229, ${0.45 * targetOpacity})`;
+              targetOpacity = 0.45 * Math.max(0, Math.min(1, (1100 - distance) / 300));
+              tgtColor = '#e5e5e5';
             }
           }
         }
@@ -262,8 +325,18 @@ function ThreeForceGraphComponent({
         }
 
         if (targetVisible) {
-          sprite.color = tgtColor;
-          sprite.textHeight = tgtHeight;
+          if (sprite.color !== tgtColor) {
+            sprite.color = tgtColor;
+            needsNextFrame = true;
+          }
+          if (sprite.textHeight !== tgtHeight) {
+            sprite.textHeight = tgtHeight;
+            needsNextFrame = true;
+          }
+          if (sprite.material.opacity !== targetOpacity) {
+            sprite.material.opacity = targetOpacity;
+            needsNextFrame = true;
+          }
 
           // Interpolate position relative to viewport up-vector
           if (sprite.userData.currentY === undefined) sprite.userData.currentY = targetY;
@@ -287,8 +360,8 @@ function ThreeForceGraphComponent({
       }
     };
 
-    updateSpritePositions();
-  }, [fgRef]);
+    frameId = requestAnimationFrame(updateSpritePositions);
+  }, [fgRef, getLinkGroup]);
 
   // Hook up OrbitControls listener to trigger animation frame requests when the user drags the camera
   useEffect(() => {
@@ -318,11 +391,12 @@ function ThreeForceGraphComponent({
   // Wake up render loop when visual props or highlight state change
   useEffect(() => {
     triggerUpdate();
-  }, [selectedNodeId, selectedLink, hoveredNodeId, hoveredLink, showLabels, sizeBasis, colorMode, highlightNodes, triggerUpdate]);
+  }, [selectedNodeId, selectedLink, hoveredNodeId, hoveredLink, showLabels, sizeBasis, colorMode, highlightNodes, highlightLinks, triggerUpdate]);
 
   // Reset local list of node groups and trigger frame request on new dataset
   useEffect(() => {
     nodeGroupsRef.current = [];
+    linkGroupRef.current = null;
     triggerUpdate();
   }, [displayData, triggerUpdate]);
 
