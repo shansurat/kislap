@@ -249,19 +249,35 @@ export function useGraphData({
 
     // Calculate degree (total active battles) for each node
     const degreeCount: Record<string, number> = {};
+    const teamMembers: Record<string, string[]> = {};
+    
     links.forEach(link => {
-      if (link.type !== 'MEMBER_OF') {
-        const sId = typeof link.source === 'object' ? link.source.id : link.source;
-        const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      const sId = typeof link.source === 'object' ? link.source.id : link.source;
+      const tId = typeof link.target === 'object' ? link.target.id : link.target;
+      
+      if (link.type === 'MEMBER_OF') {
+        if (!teamMembers[tId]) teamMembers[tId] = [];
+        teamMembers[tId].push(sId);
+      } else {
         degreeCount[sId] = (degreeCount[sId] || 0) + 1;
         degreeCount[tId] = (degreeCount[tId] || 0) + 1;
       }
     });
 
-    nodes = nodes.map(node => ({
-      ...node,
-      battleCount: degreeCount[node.id] || 0
-    }));
+    nodes = nodes.map(node => {
+      let trueCount = degreeCount[node.id] || 0;
+      if (node.group === 'Emcee') {
+        Object.keys(teamMembers).forEach(teamId => {
+          if (teamMembers[teamId].includes(node.id)) {
+            trueCount += (degreeCount[teamId] || 0);
+          }
+        });
+      }
+      return {
+        ...node,
+        battleCount: trueCount
+      };
+    });
 
     // 7. Inject Battle nodes into the nodes array
     Object.values(battleHubs).forEach(rumble => {
@@ -304,24 +320,42 @@ export function useGraphData({
       if (!stats[sourceId]) stats[sourceId] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 };
       if (!stats[targetId]) stats[targetId] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 };
 
+      // Helper to apply stats to a node and its team members (if any)
+      const applyStats = (id: string, result: 'win' | 'loss' | 'draw') => {
+        const idsToUpdate = [id];
+        // If it's a team node, also update its members
+        if (displayData.nodes.find(n => n.id === id)?.group === 'Team') {
+          displayData.links.forEach(l => {
+            const sId = typeof l.source === 'object' ? l.source.id : l.source;
+            const tId = typeof l.target === 'object' ? l.target.id : l.target;
+            if (l.type === 'MEMBER_OF' && tId === id) idsToUpdate.push(sId);
+          });
+        }
+        
+        idsToUpdate.forEach(uId => {
+          if (!stats[uId]) stats[uId] = { wins: 0, losses: 0, draws: 0, total: 0, winRate: 0.5 };
+          if (result === 'win') stats[uId].wins += 1;
+          else if (result === 'loss') stats[uId].losses += 1;
+          else if (result === 'draw') stats[uId].draws += 1;
+          stats[uId].total += 1;
+        });
+      };
+
       if (link.type === 'DEFEATED') {
-        stats[sourceId].wins += 1; stats[targetId].losses += 1;
-        stats[sourceId].total += 1; stats[targetId].total += 1;
+        applyStats(sourceId, 'win');
+        applyStats(targetId, 'loss');
       } else if (link.type === 'BATTLED') {
         if (winners.includes('Draw')) {
-          stats[sourceId].draws += 1; stats[targetId].draws += 1;
-          stats[sourceId].total += 1; stats[targetId].total += 1;
+          applyStats(sourceId, 'draw');
+          applyStats(targetId, 'draw');
         }
       } else if (link.type === 'WON') {
-        stats[sourceId].wins += 1;
-        stats[sourceId].total += 1;
+        applyStats(sourceId, 'win');
       } else if (link.type === 'LOST') {
-        stats[targetId].losses += 1;
-        stats[targetId].total += 1;
+        applyStats(targetId, 'loss');
       } else if (link.type === 'PARTICIPATED_IN') {
         if (winners.includes('Draw')) {
-          stats[sourceId].draws += 1;
-          stats[sourceId].total += 1;
+          applyStats(sourceId, 'draw');
         }
       }
     });

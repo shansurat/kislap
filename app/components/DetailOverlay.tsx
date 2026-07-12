@@ -49,6 +49,7 @@ export function DetailOverlay({
           <div className="grid grid-cols-2 gap-2 text-xs text-neutral-400 mb-4">
             {selectedNode.hometown && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Hometown</span><span className="text-neutral-200">{selectedNode.hometown}</span></div>}
             {selectedNode.total_views != null && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Total Views</span><span className="text-neutral-200">{selectedNode.total_views.toLocaleString()}</span></div>}
+            {selectedNode.battleCount != null && selectedNode.group !== 'Event' && <div><span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Total Battles</span><span className="text-neutral-200">{selectedNode.battleCount.toLocaleString()}</span></div>}
           </div>
 
           {nodeStats[selectedNode.id] && (
