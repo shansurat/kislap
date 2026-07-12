@@ -20,6 +20,17 @@ const SHARED_SPHERE_GEOMETRY = new THREE.SphereGeometry(1, 16, 16);
 const SHARED_OCTAHEDRON_GEOMETRY = new THREE.OctahedronGeometry(1);
 const SHARED_DODECAHEDRON_GEOMETRY = new THREE.DodecahedronGeometry(1);
 
+const BATTLE_MATERIAL = new THREE.MeshLambertMaterial({
+  color: '#eab308',
+  transparent: true,
+  opacity: 0.9,
+});
+const TEAM_MATERIAL = new THREE.MeshLambertMaterial({
+  color: '#38bdf8',
+  transparent: true,
+  opacity: 0.9,
+});
+
 const getWinRateColor = (rate: number) => {
   let h, s, l;
   if (rate < 0.5) {
@@ -99,158 +110,235 @@ function ThreeForceGraphComponent({
     graphState.current = { selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId };
   }, [selectedNodeId, selectedLink, highlightNodes, showLabels, sizeBasis, colorMode, nodeStats, hoveredNodeId]);
 
-  // Handle camera up-vector alignment loop for labels
-  useEffect(() => {
+  // Flat array of active node groups to avoid full scene traversal
+  const nodeGroupsRef = useRef<THREE.Group[]>([]);
+  
+  // Track camera state to detect motion and pause/resume animation frames
+  const lastCameraState = useRef({
+    position: new THREE.Vector3(),
+    quaternion: new THREE.Quaternion(),
+  });
+  
+  const isLoopRunning = useRef(false);
+
+  const triggerUpdate = useCallback(() => {
+    if (isLoopRunning.current) return;
+    isLoopRunning.current = true;
+
     let frameId: number;
 
-    const startAnimation = () => {
-      // The camera and scene are now guaranteed to be ready
-      const camera = fgRef.current.camera();
-      const scene = fgRef.current.scene();
+    const updateSpritePositions = () => {
+      const camera = fgRef.current?.camera();
+      const scene = fgRef.current?.scene();
+      if (!camera || !scene) {
+        isLoopRunning.current = false;
+        return;
+      }
 
-      const updateSpritePositions = () => {
-        const state = graphState.current;
-        const camPos = camera.position;
-        const VIS_DIST_SQ = 650 * 650; // Text is hidden beyond 650 units
+      const state = graphState.current;
+      const camPos = camera.position;
+      const camQuat = camera.quaternion;
+      const VIS_DIST_SQ = 650 * 650;
 
-        scene.traverse((obj: THREE.Object3D) => {
-          if (obj.name === 'node-group') {
-            const sprite = obj.getObjectByName('node-label') as SpriteText | undefined;
-            const mesh = obj.getObjectByName('node-mesh') as THREE.Mesh | undefined;
-            const node = obj.userData.node;
+      let needsNextFrame = false;
 
-            if (!sprite || !mesh || !node) return;
+      // Detect if camera moved (zoom, pan, rotate)
+      const distSq = lastCameraState.current.position.distanceToSquared(camPos);
+      const angle = lastCameraState.current.quaternion.angleTo(camQuat);
+      const cameraChanged = distSq > 0.00001 || angle > 0.0001;
 
-            const isCenter = state.selectedNodeId === node.id;
-            const isHighlighted = state.highlightNodes.has(node.id);
-            const isHovered = state.hoveredNodeId === node.id;
+      if (cameraChanged) {
+        lastCameraState.current.position.copy(camPos);
+        lastCameraState.current.quaternion.copy(camQuat);
+        needsNextFrame = true;
+      }
 
-            // Scale node geometry
-            let targetScale = 1.0;
-            if (node.group === 'Battle') {
-              targetScale = 2.5;
+      // Filter out stale node groups
+      nodeGroupsRef.current = nodeGroupsRef.current.filter(obj => obj.parent !== null);
+
+      nodeGroupsRef.current.forEach((obj) => {
+        const sprite = obj.getObjectByName('node-label') as SpriteText | undefined;
+        const mesh = obj.getObjectByName('node-mesh') as THREE.Mesh | undefined;
+        const node = obj.userData.node;
+
+        if (!sprite || !mesh || !node) return;
+
+        const isCenter = state.selectedNodeId === node.id;
+        const isHighlighted = state.highlightNodes.has(node.id);
+
+        // Scale node geometry
+        let targetScale = 1.0;
+        if (node.group === 'Battle') {
+          targetScale = 2.5;
+        } else {
+          let basisVal = 0;
+          if (state.sizeBasis === 'views') {
+            basisVal = node.total_views ?? 0;
+            targetScale = Math.max(1.0, Math.min(8.0, (Math.log10(basisVal + 1) - 3) * 1.5 + 1.2));
+          } else {
+            basisVal = node.group === 'Team' ? Math.max(0, (node.val - 4) / 0.4) : Math.max(0, (node.val - 2) / 0.4);
+            targetScale = Math.max(1.0, Math.min(8.0, 1.0 + Math.sqrt(basisVal) * 1.0));
+          }
+        }
+
+        if (state.selectedNodeId) {
+          if (isCenter) targetScale *= 1.35;
+          else if (!isHighlighted) targetScale *= 0.65;
+        }
+
+        const currentScale = mesh.scale.x;
+        if (Math.abs(currentScale - targetScale) > 0.01) {
+          const nextScale = currentScale + (targetScale - currentScale) * 0.15;
+          mesh.scale.setScalar(nextScale);
+          needsNextFrame = true;
+        }
+
+        // Node styling colors
+        let targetColorStr = '#ffffff';
+        if (node.group === 'Battle') {
+          targetColorStr = '#eab308';
+        } else if (node.group === 'Team') {
+          targetColorStr = '#38bdf8';
+        } else if (state.selectedNodeId) {
+          if (isCenter) targetColorStr = '#FFFFFF';
+          else if (!isHighlighted) targetColorStr = '#333333';
+          else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
+        } else {
+          targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
+        }
+
+        // Only modify materials for non-shared nodes (like Emcees)
+        if (node.group !== 'Battle' && node.group !== 'Team' && mesh.userData.currentColor !== targetColorStr) {
+          (mesh.material as THREE.MeshLambertMaterial).color.set(targetColorStr);
+          mesh.userData.currentColor = targetColorStr;
+          needsNextFrame = true;
+        }
+
+        // Text labels visibility
+        if (!state.showLabels) {
+          if (sprite.visible) {
+            sprite.visible = false;
+            needsNextFrame = true;
+          }
+          return;
+        }
+
+        const nodeHeight = targetScale;
+        let targetVisible = false;
+        let tgtColor = 'rgba(255, 255, 255, 0.7)';
+        let tgtHeight = 2.5;
+        let targetY = nodeHeight + 2.0;
+        let targetOpacity = 1;
+
+        if (state.selectedNodeId) {
+          if (isCenter) {
+            targetVisible = true;
+            tgtColor = '#ffffff';
+            tgtHeight = 3.6;
+            targetY = nodeHeight + 3.0;
+          } else if (isHighlighted) {
+            targetVisible = true;
+            tgtColor = 'rgba(255, 255, 255, 0.85)';
+            tgtHeight = 2.8;
+            targetY = nodeHeight + 2.0;
+          }
+        } else {
+          const distSq = camPos.distanceToSquared(obj.position);
+          if (distSq < VIS_DIST_SQ) {
+            targetVisible = true;
+            if (state.hoveredNodeId === node.id) {
+              tgtColor = '#ffffff';
             } else {
-              let basisVal = 0;
-              if (state.sizeBasis === 'views') {
-                basisVal = node.total_views ?? 0;
-                // Scale views using log10 so multi-millions don't immediately cap out
-                targetScale = Math.max(1.0, Math.min(8.0, (Math.log10(basisVal + 1) - 3) * 1.5 + 1.2));
-              } else {
-                // Extract unfiltered total battle count from the node's base value
-                basisVal = node.group === 'Team' ? Math.max(0, (node.val - 4) / 0.4) : Math.max(0, (node.val - 2) / 0.4);
-                // Scale battles using a gentler square root curve
-                targetScale = Math.max(1.0, Math.min(8.0, 1.0 + Math.sqrt(basisVal) * 1.0));
-              }
-            }
-
-            if (state.selectedNodeId) {
-              if (isCenter) targetScale *= 1.35;
-              else if (!isHighlighted) targetScale *= 0.65;
-            }
-
-            const currentScale = mesh.scale.x;
-            if (Math.abs(currentScale - targetScale) > 0.01) {
-              const nextScale = currentScale + (targetScale - currentScale) * 0.15;
-              mesh.scale.setScalar(nextScale);
-            }
-
-            // Node styling colors
-            let targetColorStr = '#ffffff';
-            if (node.group === 'Battle') {
-              targetColorStr = '#eab308';
-            } else if (node.group === 'Team') {
-              targetColorStr = '#38bdf8';
-            } else if (state.selectedNodeId) {
-              if (isCenter) targetColorStr = '#FFFFFF';
-              else if (!isHighlighted) targetColorStr = '#333333';
-              else targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
-            } else {
-              targetColorStr = state.colorMode === 'winRate' ? getWinRateColor(state.nodeStats[node.id]?.winRate ?? 0.5) : '#a3a3a3';
-            }
-
-            if (mesh.userData.currentColor !== targetColorStr) {
-              (mesh.material as THREE.MeshLambertMaterial).color.set(targetColorStr);
-              mesh.userData.currentColor = targetColorStr;
-            }
-
-            // Text labels visibility
-            if (!state.showLabels) {
-              sprite.visible = false;
-              return;
-            }
-
-            const nodeHeight = targetScale;
-            let targetVisible = false;
-            let tgtColor = 'rgba(255, 255, 255, 0.7)';
-            let tgtHeight = 2.5;
-            let targetY = nodeHeight + 2.0;
-            let targetOpacity = 1;
-
-            if (state.selectedNodeId) {
-              if (isCenter) {
-                targetVisible = true;
-                tgtColor = '#ffffff';
-                tgtHeight = 3.6;
-                targetY = nodeHeight + 3.0;
-              } else if (isHighlighted) {
-                targetVisible = true;
-                tgtColor = 'rgba(255, 255, 255, 0.85)';
-                tgtHeight = 2.8;
-                targetY = nodeHeight + 2.0;
-              }
-            } else {
-              const distSq = camPos.distanceToSquared(obj.position);
-              if (distSq < VIS_DIST_SQ) {
-                targetVisible = true;
-                if (isHovered) {
-                  tgtColor = '#ffffff';
-                } else {
-                  const distance = Math.sqrt(distSq);
-                  targetOpacity = Math.max(0, Math.min(1, (650 - distance) / 250));
-                  tgtColor = `rgba(229, 229, 229, ${0.45 * targetOpacity})`;
-                }
-              }
-            }
-
-            sprite.visible = targetVisible;
-
-            if (targetVisible) {
-              sprite.color = tgtColor;
-              sprite.textHeight = tgtHeight;
-
-              // Interpolate position relative to viewport up-vector
-              if (sprite.userData.currentY === undefined) sprite.userData.currentY = targetY;
-              sprite.userData.currentY += (targetY - sprite.userData.currentY) * 0.15;
-
-              const upVector = new THREE.Vector3();
-              upVector.setFromMatrixColumn(camera.matrixWorld, 1);
-              upVector.normalize().multiplyScalar(sprite.userData.currentY);
-              sprite.position.copy(upVector);
+              const distance = Math.sqrt(distSq);
+              targetOpacity = Math.max(0, Math.min(1, (650 - distance) / 250));
+              tgtColor = `rgba(229, 229, 229, ${0.45 * targetOpacity})`;
             }
           }
-        });
+        }
 
+        if (sprite.visible !== targetVisible) {
+          sprite.visible = targetVisible;
+          needsNextFrame = true;
+        }
+
+        if (targetVisible) {
+          sprite.color = tgtColor;
+          sprite.textHeight = tgtHeight;
+
+          // Interpolate position relative to viewport up-vector
+          if (sprite.userData.currentY === undefined) sprite.userData.currentY = targetY;
+          const diff = targetY - sprite.userData.currentY;
+          if (Math.abs(diff) > 0.01) {
+            sprite.userData.currentY += diff * 0.15;
+            needsNextFrame = true;
+          }
+
+          const upVector = new THREE.Vector3();
+          upVector.setFromMatrixColumn(camera.matrixWorld, 1);
+          upVector.normalize().multiplyScalar(sprite.userData.currentY);
+          sprite.position.copy(upVector);
+        }
+      });
+
+      if (needsNextFrame) {
         frameId = requestAnimationFrame(updateSpritePositions);
-      };
-
-      updateSpritePositions();
+      } else {
+        isLoopRunning.current = false;
+      }
     };
 
-    // Poll until fgRef.current is ready
-    const timer = setInterval(() => {
-      if (fgRef.current && fgRef.current.camera && fgRef.current.scene) {
-        clearInterval(timer);
-        startAnimation();
+    updateSpritePositions();
+  }, [fgRef]);
+
+  // Hook up OrbitControls listener to trigger animation frame requests when the user drags the camera
+  useEffect(() => {
+    let timer: any;
+    let controls: any;
+
+    const setupControlsListener = () => {
+      if (fgRef.current && fgRef.current.controls) {
+        controls = fgRef.current.controls();
+        if (controls) {
+          controls.addEventListener('change', triggerUpdate);
+          clearInterval(timer);
+        }
       }
-    }, 100);
+    };
+
+    timer = setInterval(setupControlsListener, 100);
 
     return () => {
       clearInterval(timer);
-      if (frameId) cancelAnimationFrame(frameId);
+      if (controls) {
+        controls.removeEventListener('change', triggerUpdate);
+      }
     };
-  }, [fgRef]);
+  }, [fgRef, triggerUpdate]);
 
-  // Handle node geometry generation
+  // Wake up render loop when visual props or highlight state change
+  useEffect(() => {
+    triggerUpdate();
+  }, [selectedNodeId, selectedLink, hoveredNodeId, hoveredLink, showLabels, sizeBasis, colorMode, highlightNodes, triggerUpdate]);
+
+  // Reset local list of node groups and trigger frame request on new dataset
+  useEffect(() => {
+    nodeGroupsRef.current = [];
+    triggerUpdate();
+  }, [displayData, triggerUpdate]);
+
+  // Initial trigger after graph engine is fully initialized
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (fgRef.current && fgRef.current.camera && fgRef.current.scene) {
+        clearInterval(timer);
+        // Set initial camera position back, so we aren't inside the graph cluster
+        fgRef.current.cameraPosition({ x: 0, y: 0, z: 800 });
+        triggerUpdate();
+      }
+    }, 100);
+    return () => clearInterval(timer);
+  }, [fgRef, triggerUpdate]);
+
   const handleNodeThreeObject = useCallback((node: any) => {
     const group = new THREE.Group();
     group.name = 'node-group';
@@ -259,20 +347,23 @@ function ThreeForceGraphComponent({
     // Select material based on group
     let geometry: THREE.BufferGeometry = SHARED_SPHERE_GEOMETRY;
     let color = '#a3a3a3';
+    let material: THREE.Material;
 
     if (node.group === 'Battle') {
       geometry = SHARED_OCTAHEDRON_GEOMETRY;
       color = '#eab308';
+      material = BATTLE_MATERIAL;
     } else if (node.group === 'Team') {
       geometry = SHARED_DODECAHEDRON_GEOMETRY;
       color = '#38bdf8';
+      material = TEAM_MATERIAL;
+    } else {
+      material = new THREE.MeshLambertMaterial({
+        color,
+        transparent: true,
+        opacity: 0.9,
+      });
     }
-
-    const material = new THREE.MeshLambertMaterial({
-      color,
-      transparent: true,
-      opacity: 0.9,
-    });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.name = 'node-mesh';
@@ -290,8 +381,12 @@ function ThreeForceGraphComponent({
     sprite.color = 'rgba(255, 255, 255, 0.7)';
     sprite.backgroundColor = 'rgba(0, 0, 0, 0)'; // Explicitly transparent
     sprite.material.depthWrite = false; // Fixes the WebGL depth clipping artifacts (black box background)
+    sprite.renderOrder = 999; // Render labels on top of links and nodes
     sprite.visible = false; // Visibility and position handled dynamically by frame animation loop
     group.add(sprite);
+
+    // Register node group in flat array for fast loop updates
+    nodeGroupsRef.current.push(group);
 
     return group;
   }, []);
@@ -381,6 +476,7 @@ function ThreeForceGraphComponent({
       width={dimensions.width}
       height={dimensions.height}
       graphData={displayData}
+      onEngineTick={triggerUpdate}
 
       nodeLabel={handleNodeLabel}
       linkLabel={handleLinkLabel}

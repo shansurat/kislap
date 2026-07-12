@@ -95,7 +95,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           fgRef.current.zoomToFit(800, 150);
           hasInitiallyZoomed.current = true;
         }
-      }, 350);
+      }, 1200); // Wait 1200ms to allow layout expansion before fitting
     }
   }, [displayData]);
 
