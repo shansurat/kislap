@@ -5,7 +5,7 @@ import SpriteText from 'three-spritetext';
 import { formatSeparators, formatViews } from '../utils/helpers';
 import { GraphNode, GraphLink } from '../hooks/useGraphData';
 
-const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), { 
+const ForceGraph3D = dynamic(() => import('react-force-graph-3d'), {
   ssr: false,
   loading: () => (
     <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-neutral-400 font-mono text-xs select-none">
@@ -102,7 +102,7 @@ function ThreeForceGraphComponent({
   // Handle camera up-vector alignment loop for labels
   useEffect(() => {
     let frameId: number;
-    
+
     const startAnimation = () => {
       // The camera and scene are now guaranteed to be ready
       const camera = fgRef.current.camera();
@@ -345,20 +345,20 @@ function ThreeForceGraphComponent({
         </div>
       `;
     }
-    
+
     const sourceName = typeof link.source === 'object' ? link.source.name : link.source;
     const targetName = typeof link.target === 'object' ? link.target.name : link.target;
     const battleName = link.battle_name || `${sourceName} vs ${targetName}`;
     const formattedName = formatSeparators(battleName);
-    
+
     const details = [];
     if (link.event_name) details.push(link.event_name);
     if (link.year) details.push(link.year);
     if (link.match_format) details.push(FORMAT_LABELS[link.match_format] || link.match_format);
-    
+
     const viewsText = link.view_count != null ? `${formatViews(link.view_count)} views` : '';
     const groupColor = link.type === 'BATTLED' ? '#a3a3a3' : '#b59210';
-    
+
     return `
       <div style="
         background: rgba(13, 13, 13, 0.95);
