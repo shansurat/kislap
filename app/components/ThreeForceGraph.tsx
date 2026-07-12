@@ -146,8 +146,6 @@ function ThreeForceGraphComponent({
             if (state.selectedNodeId) {
               if (isCenter) targetScale *= 1.35;
               else if (!isHighlighted) targetScale *= 0.65;
-            } else if (isHovered) {
-              targetScale *= 1.15;
             }
 
             const currentScale = mesh.scale.x;
@@ -206,8 +204,6 @@ function ThreeForceGraphComponent({
                 targetVisible = true;
                 if (isHovered) {
                   tgtColor = '#ffffff';
-                  tgtHeight = 3.2;
-                  targetY = nodeHeight + 2.5;
                 } else {
                   const distance = Math.sqrt(distSq);
                   targetOpacity = Math.max(0, Math.min(1, (650 - distance) / 250));
@@ -429,32 +425,24 @@ function ThreeForceGraphComponent({
       }}
       linkOpacity={0.75}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      linkWidth={(link: any) => {
-        const isHovered = hoveredLink === link;
-        if (selectedNodeId || selectedLink) {
-          if (highlightLinks.has(link)) {
-            return (link.type === 'MEMBER_OF' ? 0.6 : 1.5) * (isHovered ? 2.5 : 1);
-          }
-          return 0.05;
-        }
-        return (link.type === 'MEMBER_OF' ? 0.2 : 1.0) * (isHovered ? 2.5 : 1);
-      }}
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       linkDirectionalArrowLength={() => 0}
       linkDirectionalArrowRelPos={1}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       linkDirectionalParticles={(link: any) => {
+        const isHovered = hoveredLink === link;
         if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) return link.type === 'MEMBER_OF' ? 2 : 4;
+        if (isHovered) return 4;
         return 0;
       }}
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       linkDirectionalParticleSpeed={(link: any) => {
+        const isHovered = hoveredLink === link;
         if ((selectedNodeId || selectedLink) && highlightLinks.has(link)) {
           return link.type === 'MEMBER_OF' ? 0.005 : -0.003;
         }
+        if (isHovered) return link.type === 'MEMBER_OF' ? 0.008 : -0.006;
         return 0;
       }}
-      linkResolution={6}
     />
   );
 }
