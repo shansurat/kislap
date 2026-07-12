@@ -214,7 +214,7 @@ function ThreeForceGraphComponent({
           
           let targetRenderOrder = 0;
           let targetDepthTest = true;
-          if (state.selectedNodeId) {
+          if (state.selectedNodeId || state.selectedLink) {
             if (state.highlightLinks.has(link)) {
               targetRenderOrder = 10;
               targetDepthTest = false;
@@ -265,7 +265,7 @@ function ThreeForceGraphComponent({
         // Handle Render Order for Subgraph Foregrounding
         let targetRenderOrder = 0;
         let targetDepthTest = true;
-        if (state.selectedNodeId) {
+        if (state.selectedNodeId || state.selectedLink) {
           targetRenderOrder = (isCenter || isHighlighted) ? 20 : 0;
           targetDepthTest = !(isCenter || isHighlighted);
         }
@@ -327,7 +327,7 @@ function ThreeForceGraphComponent({
 
         // Node styling colors
         let targetColorStr = '#ffffff';
-        if (state.selectedNodeId) {
+        if (state.selectedNodeId || state.selectedLink) {
           if (isCenter) targetColorStr = '#FFFFFF';
           else if (!isHighlighted) targetColorStr = '#333333';
           else if (node.group === 'Battle') targetColorStr = '#eab308';
@@ -365,7 +365,7 @@ function ThreeForceGraphComponent({
         let targetY = nodeHeight + 2.8;
         let targetOpacity = 0.7;
 
-        if (state.selectedNodeId) {
+        if (state.selectedNodeId || state.selectedLink) {
           // Use a soft power curve instead of linear multiplier to prevent massive text overlap
           // At distance 400, scale is 1.0. At distance 1600, scale is only ~1.58 instead of 4.0
           const distanceScale = Math.max(1.0, Math.pow(distance / 400, 0.5));
