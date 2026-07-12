@@ -4,7 +4,7 @@ import { getNeo4jDriver } from '@/lib/neo4j';
 import { redis } from '@/lib/redis';
 
 export async function fetchGraphDataForVisualization() {
-  const CACHE_KEY = 'kislap:graph_data';
+  const CACHE_KEY = 'pulso:graph_data';
 
   if (redis) {
     try {

@@ -46,7 +46,21 @@ const FORMAT_LABELS: Record<string, string> = {
 
 const HUB_FORMATS = ['royal_rumble', '3way'];
 
-const getWinRateColor = (rate: number) => `hsl(${Math.round(rate * 120)}, 80%, 50%)`;
+const getWinRateColor = (rate: number) => {
+  let h, s, l;
+  if (rate < 0.5) {
+    const t = rate / 0.5; // 0 to 1
+    h = t * 40;           // 0 to 40
+    s = 75;
+    l = 60 - t * 5;       // 60 to 55
+  } else {
+    const t = (rate - 0.5) / 0.5; // 0 to 1
+    h = 40 + t * 105;             // 40 to 145
+    s = 75 - t * 10;              // 75 to 65
+    l = 55;
+  }
+  return `hsl(${Math.round(h)}, ${Math.round(s)}%, ${Math.round(l)}%)`;
+};
 
 const formatSeparators = (text: string) => {
   if (!text) return '';
@@ -767,6 +781,18 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
     `;
   }, []);
 
+  if (!graphData || !graphData.nodes || graphData.nodes.length === 0) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-black text-neutral-400 font-mono text-xs select-none">
+        <div className="text-red-500 text-lg mb-2">⚠</div>
+        <div className="tracking-widest uppercase text-neutral-200 mb-1 font-bold">Database Connection Offline</div>
+        <div className="text-neutral-600 max-w-xs text-center leading-relaxed">
+          The visualization engine was unable to establish a secure link to the graph network. Please verify that the Neo4j database is active and reload the page.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div ref={containerRef} className="w-full h-full relative group font-sans">
 
@@ -1147,6 +1173,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           }
           return 0;
         }}
+        linkResolution={6}
       />
     </div>
   );
