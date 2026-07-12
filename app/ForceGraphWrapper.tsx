@@ -48,11 +48,61 @@ const HUB_FORMATS = ['royal_rumble', '3way'];
 
 const getWinRateColor = (rate: number) => `hsl(${Math.round(rate * 120)}, 80%, 50%)`;
 
+const formatSeparators = (text: string) => {
+  if (!text) return '';
+  // First replace " & " with " / "
+  let formatted = text.replaceAll(' & ', ' / ');
+  
+  // Then replace " / " with styled span
+  formatted = formatted.split(' / ').map(part => {
+    return part;
+  }).join(' <span style="color: #737373; font-weight: 300; margin: 0 4px;">/</span> ');
+  
+  // Then replace " vs " or " vs. " (case-insensitive) with styled span
+  formatted = formatted.replace(/\s+(?:vs|v\.?s\.?|versus)\s+/i, ' <span style="color: #737373; font-weight: 500; font-style: italic; text-transform: lowercase; margin: 0 4px;">vs</span> ');
+  
+  return formatted;
+};
+
+const renderStyledName = (text: string) => {
+  if (!text) return null;
+  // Replace " & " with " / "
+  const cleanText = text.replaceAll(' & ', ' / ');
+  
+  // Split by " vs " or " vs. " (case-insensitive)
+  const battleParts = cleanText.split(/\s+(?:vs|v\.?s\.?|versus)\s+/i);
+  
+  return (
+    <>
+      {battleParts.map((battlePart, bIdx) => {
+        // Split each part by " / "
+        const teamParts = battlePart.split(' / ');
+        return (
+          <span key={bIdx}>
+            {teamParts.map((name, tIdx) => (
+              <span key={tIdx}>
+                <span className="whitespace-nowrap">{name}</span>
+                {tIdx < teamParts.length - 1 && (
+                  <span className="text-neutral-500/60 font-light mx-1">/</span>
+                )}
+              </span>
+            ))}
+            {bIdx < battleParts.length - 1 && (
+              <span className="text-neutral-500/60 font-medium italic lowercase mx-1.5">vs</span>
+            )}
+          </span>
+        );
+      })}
+    </>
+  );
+};
+
 export default function GraphClient({ graphData }: { graphData: GraphData }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const fgRef = useRef<any>(null);
   const hasInitiallyZoomed = useRef<boolean>(false);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
+  const [hoveredLink, setHoveredLink] = useState<any | null>(null);
 
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['1v1', '2v2', '3v3', '5v5', '3way', 'royal_rumble', 'handicap']);
   const [isFormatDropdownOpen, setIsFormatDropdownOpen] = useState<boolean>(false);
@@ -639,6 +689,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
 
   const handleNodeLabel = useCallback((node: any) => {
     const groupColor = node.group === 'Team' ? '#38bdf8' : node.group === 'Event' ? '#eab308' : '#a3a3a3';
+    const formattedName = formatSeparators(node.name);
     return `
       <div style="
         background: rgba(13, 13, 13, 0.95);
@@ -649,11 +700,69 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         font-size: 12px;
         border-radius: 0px;
       ">
-        <div style="font-weight: 600; color: #ffffff;">${node.name}</div>
+        <div style="font-weight: 600; color: #ffffff;">${formattedName}</div>
         <div style="font-size: 9px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; color: ${groupColor}; font-weight: 700;">
           ${node.group}
         </div>
         ${node.hometown ? `<div style="font-size: 10px; color: #737373; margin-top: 2px;">${node.hometown}</div>` : ''}
+      </div>
+    `;
+  }, []);
+
+  const handleLinkLabel = useCallback((link: any) => {
+    if (link.type === 'MEMBER_OF') {
+      const sourceName = typeof link.source === 'object' ? link.source.name : link.source;
+      const targetName = typeof link.target === 'object' ? link.target.name : link.target;
+      return `
+        <div style="
+          background: rgba(13, 13, 13, 0.95);
+          border: 1px solid #262626;
+          padding: 8px 12px;
+          color: #e5e5e5;
+          font-family: ui-sans-serif, system-ui, sans-serif;
+          font-size: 12px;
+          border-radius: 0px;
+        ">
+          <div style="font-weight: 600; color: #ffffff;">
+            ${formatSeparators(sourceName)} <span style="color: #737373; font-weight: 300; margin: 0 4px;">/</span> ${formatSeparators(targetName)}
+          </div>
+          <div style="font-size: 9px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; color: #0ea5e9; font-weight: 700;">
+            Member Of Team
+          </div>
+        </div>
+      `;
+    }
+    
+    // For combat/battle links (DEFEATED, BATTLED, WON, LOST, etc.)
+    const sourceName = typeof link.source === 'object' ? link.source.name : link.source;
+    const targetName = typeof link.target === 'object' ? link.target.name : link.target;
+    const battleName = link.battle_name || `${sourceName} vs ${targetName}`;
+    const formattedName = formatSeparators(battleName);
+    
+    const details = [];
+    if (link.event_name) details.push(link.event_name);
+    if (link.year) details.push(link.year);
+    if (link.match_format) details.push(FORMAT_LABELS[link.match_format] || link.match_format);
+    
+    const viewsText = link.view_count != null ? `${formatViews(link.view_count)} views` : '';
+    const groupColor = link.type === 'BATTLED' ? '#a3a3a3' : '#b59210';
+    
+    return `
+      <div style="
+        background: rgba(13, 13, 13, 0.95);
+        border: 1px solid #262626;
+        padding: 8px 12px;
+        color: #e5e5e5;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 12px;
+        border-radius: 0px;
+      ">
+        <div style="font-weight: 600; color: #ffffff;">${formattedName}</div>
+        <div style="font-size: 9px; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.05em; color: ${groupColor}; font-weight: 700;">
+          ${link.type === 'DEFEATED' ? 'Battle (Defeat)' : link.type === 'BATTLED' ? 'Battle (Draw/Promo)' : 'Battle'}
+        </div>
+        ${details.length > 0 ? `<div style="font-size: 10px; color: #a3a3a3; margin-top: 2px;">${details.join(' • ')}</div>` : ''}
+        ${viewsText ? `<div style="font-size: 10px; color: #737373; margin-top: 2px;">${viewsText}</div>` : ''}
       </div>
     `;
   }, []);
@@ -677,7 +786,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
               </div>
             )}
             <div>
-              <h3 className="font-bold text-base leading-tight pr-4 text-white">{selectedNode.name}</h3>
+              <h3 className="font-bold text-base leading-tight pr-4 text-white">{renderStyledName(selectedNode.name)}</h3>
               <span className="inline-block mt-1 text-[9px] uppercase tracking-wider bg-neutral-900 border border-neutral-800 text-neutral-400 px-1.5 py-0.5 font-semibold">{selectedNode.group}</span>
             </div>
           </div>
@@ -737,7 +846,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           <div className="flex flex-col gap-1 mb-4 text-sm bg-neutral-900/50 p-2 border border-neutral-800">
             <div className="flex justify-between items-center text-center">
               <span className={`font-bold flex-1 truncate ${selectedLink.type === 'WON' ? 'text-[#4ade80]' : ''}`}>
-                {selectedLink.source.name || selectedLink.source}
+                {renderStyledName(selectedLink.source.name || selectedLink.source)}
               </span>
               <span className="text-[10px] text-neutral-500 px-2 whitespace-nowrap">
                 {selectedLink.type === 'DEFEATED' ? '🏆 DEFEATED' :
@@ -749,7 +858,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
               <span className={`font-bold flex-1 truncate ${
                 selectedLink.type === 'DEFEATED' || selectedLink.type === 'LOST' ? 'text-[#f87171]' : ''
               }`}>
-                {selectedLink.target.name || selectedLink.target}
+                {renderStyledName(selectedLink.target.name || selectedLink.target)}
               </span>
             </div>
           </div>
@@ -759,7 +868,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
               {selectedLink.battle_name && (
                 <div>
                   <span className="block text-[9px] uppercase tracking-wider text-neutral-500 mb-0.5">Battle Name</span>
-                  <span className="text-white font-medium">{selectedLink.battle_name}</span>
+                  <span className="text-white font-medium">{renderStyledName(selectedLink.battle_name)}</span>
                 </div>
               )}
               <div className="grid grid-cols-2 gap-y-3 gap-x-2">
@@ -913,7 +1022,10 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
                       {node.name.charAt(0).toUpperCase()}
                     </div>
                   )}
-                  <span className="truncate flex-1 font-medium">{node.group === 'Team' ? `[Team] ${node.name}` : node.name}</span>
+                  <span className="truncate flex-1 font-medium">
+                    {node.group === 'Team' ? '[Team] ' : ''}
+                    {renderStyledName(node.name)}
+                  </span>
                 </button>
               );
             })}
@@ -968,9 +1080,11 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         graphData={displayData}
 
         nodeLabel={handleNodeLabel}
+        linkLabel={handleLinkLabel}
 
         onNodeClick={handleSearchSelect}
         onNodeHover={(node: any) => setHoveredNodeId(node ? node.id : null)}
+        onLinkHover={(link: any) => setHoveredLink(link)}
         onBackgroundClick={() => {
           setSelectedNodeId(null);
           setSelectedLink(null);
@@ -1009,16 +1123,17 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         linkOpacity={0.6}
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         linkWidth={(link: any) => {
+          const isHovered = hoveredLink === link;
           if (selectedNodeId || selectedLink) {
             if (highlightLinks.has(link)) {
-              return link.type === 'MEMBER_OF' ? 0.4 : 1.2;
+              return (link.type === 'MEMBER_OF' ? 0.4 : 1.2) * (isHovered ? 2.5 : 1);
             }
             return 0.05;
           }
-          return link.type === 'MEMBER_OF' ? 0.15 : 0.6;
+          return (link.type === 'MEMBER_OF' ? 0.15 : 0.6) * (isHovered ? 2.5 : 1);
         }}
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        linkDirectionalArrowLength={(link: any) => link.type === 'DEFEATED' || link.type === 'WON' || link.type === 'LOST' ? 4 : 0}
+        linkDirectionalArrowLength={() => 0}
         linkDirectionalArrowRelPos={1}
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         linkDirectionalParticles={(link: any) => {
