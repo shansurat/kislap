@@ -8,8 +8,8 @@ interface LegendProps {
 
 export function Legend({ selectedFormats, colorMode, linkColorMode }: LegendProps) {
   return (
-    <div className="absolute bottom-6 left-6 z-[55] pointer-events-none hidden md:flex flex-col gap-3 bg-[#0d0d0d] border border-neutral-800 rounded-none p-3 shadow-2xl">
-      <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold border-b border-neutral-800 pb-1">Legend</span>
+    <div className="absolute bottom-6 left-6 z-[55] pointer-events-none hidden md:flex flex-col gap-3 bg-transparent p-1 opacity-60">
+      <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold pb-1">Legend</span>
 
       {colorMode === 'winRate' && (
         <div className="flex flex-col gap-1.5">
@@ -56,7 +56,7 @@ export function Legend({ selectedFormats, colorMode, linkColorMode }: LegendProp
           </div>
         )}
 
-        <div className="h-px bg-neutral-800 w-full my-1"></div>
+        <div className="h-px w-full my-1"></div>
 
         {linkColorMode === 'relation' && (
           <>

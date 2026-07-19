@@ -49,6 +49,10 @@ interface SidebarControlsProps {
   setLinkColorMode: (mode: 'relation' | 'battle_type' | 'format') => void;
   showLabels: boolean;
   setShowLabels: (show: boolean) => void;
+  showNeighborLabels: boolean;
+  setShowNeighborLabels: (show: boolean) => void;
+  showBackgroundLinks: boolean;
+  setShowBackgroundLinks: (show: boolean) => void;
 }
 
 export function SidebarControls({
@@ -81,6 +85,10 @@ export function SidebarControls({
   setLinkColorMode,
   showLabels,
   setShowLabels,
+  showNeighborLabels,
+  setShowNeighborLabels,
+  showBackgroundLinks,
+  setShowBackgroundLinks,
 }: SidebarControlsProps) {
   return (
     <>
@@ -228,50 +236,29 @@ export function SidebarControls({
             <div className={`w-3 h-3 rounded-full bg-black transition-transform duration-200 ${showLabels ? 'translate-x-4' : 'translate-x-0'}`} />
           </button>
         </div>
+
+        <div className="flex items-center justify-between border-t border-neutral-900 pt-2">
+          <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold select-none">Show Neighbor Labels</span>
+          <button
+            onClick={() => setShowNeighborLabels(!showNeighborLabels)}
+            className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-200 focus:outline-none ${showNeighborLabels ? 'bg-neutral-400' : 'bg-neutral-800'}`}
+          >
+            <div className={`w-3 h-3 rounded-full bg-black transition-transform duration-200 ${showNeighborLabels ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between border-t border-neutral-900 pt-2">
+          <span className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold select-none">Show Background Links</span>
+          <button
+            onClick={() => setShowBackgroundLinks(!showBackgroundLinks)}
+            className={`w-8 h-4 rounded-full p-0.5 transition-colors duration-200 focus:outline-none ${showBackgroundLinks ? 'bg-neutral-400' : 'bg-neutral-800'}`}
+          >
+            <div className={`w-3 h-3 rounded-full bg-black transition-transform duration-200 ${showBackgroundLinks ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+        </div>
       </div>
 
-      <div className="bg-[#0d0d0d] border border-neutral-800 flex flex-col min-h-0 flex-1 shadow-2xl rounded-none">
-        <div className="p-3 border-b border-neutral-900 flex flex-col gap-2 shrink-0">
-          <span className="block text-[9px] uppercase tracking-wider text-neutral-500 font-semibold">Combatants</span>
-          <input
-            type="text"
-            placeholder="Search emcee or team..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full bg-neutral-950 border border-neutral-800 text-neutral-300 text-xs py-1.5 px-2.5 rounded-none focus:outline-none focus:border-neutral-700 placeholder-neutral-600 transition-colors"
-          />
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as any)}
-            className="w-full bg-neutral-950 border border-neutral-800 text-neutral-400 text-[10px] uppercase py-1 px-1.5 rounded-none focus:outline-none focus:border-neutral-700 transition-colors"
-          >
-            <option value="name">Sort: Name</option>
-            <option value="winRate">Sort: Win Rate</option>
-            <option value="views">Sort: Views</option>
-            <option value="wins">Sort: Wins</option>
-            <option value="losses">Sort: Losses</option>
-          </select>
-        </div>
-        <div className="overflow-y-auto flex-1 divide-y divide-neutral-900 custom-scrollbar">
-          {filteredEmceesList.map(node => {
-            return (
-              <button key={node.id} onClick={() => handleSearchSelect(node)} className={`w-full text-left px-3 py-2 text-xs flex items-center gap-2 rounded-none transition-colors border-none ${selectedNodeId === node.id ? 'bg-neutral-900 text-white border-l-2 border-neutral-400' : 'text-neutral-400 hover:bg-neutral-900/50'}`}>
-                {node.avatar_url ? (
-                  <Image src={node.avatar_url} alt={node.name} width={20} height={20} className="w-5 h-5 rounded-full object-cover shrink-0" />
-                ) : (
-                  <div className={`w-5 h-5 bg-neutral-900 border border-neutral-800 flex items-center justify-center text-[9px] shrink-0 rounded-none text-neutral-400`}>
-                    {node.name.charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <span className="truncate flex-1 font-medium">
-                  {node.group === 'Team' ? '[Team] ' : ''}
-                  {renderStyledName(node.name)}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+
     </>
   );
 }

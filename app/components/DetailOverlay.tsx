@@ -11,6 +11,8 @@ interface DetailOverlayProps {
   nodeStats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }>;
   battleParticipants: GraphNode[];
   displayData: { nodes: GraphNode[]; links: GraphLink[] };
+  isCameraLocked: boolean;
+  setIsCameraLocked: (locked: boolean) => void;
 }
 
 export function DetailOverlay({
@@ -21,13 +23,24 @@ export function DetailOverlay({
   nodeStats,
   battleParticipants,
   displayData,
+  isCameraLocked,
+  setIsCameraLocked,
 }: DetailOverlayProps) {
   return (
     <>
       {/* Node Details Overlay */}
       {selectedNode && !selectedLink && (
-        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
-          <button onClick={() => setSelectedNodeId(null)} className="absolute top-3 right-3 text-neutral-500 hover:text-white transition-colors">✕</button>
+        <div className="absolute top-28 left-6 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
+          <div className="absolute top-3 right-3 flex items-center gap-2">
+            <button 
+              onClick={() => setIsCameraLocked(!isCameraLocked)} 
+              className={`transition-colors ${isCameraLocked ? 'text-white' : 'text-neutral-600 hover:text-neutral-400'}`}
+              title={isCameraLocked ? "Unlock Camera" : "Lock Camera to Node"}
+            >
+              ⌖
+            </button>
+            <button onClick={() => { setSelectedNodeId(null); setIsCameraLocked(false); }} className="text-neutral-500 hover:text-white transition-colors">✕</button>
+          </div>
 
           <div className="flex items-center gap-3 pb-3 mb-3 border-b border-neutral-800">
             {selectedNode.avatar_url ? (
@@ -94,7 +107,7 @@ export function DetailOverlay({
 
       {/* Link Details Overlay */}
       {selectedLink && (
-        <div className="absolute top-4 left-4 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
+        <div className="absolute top-28 left-6 max-md:left-1/2 max-md:-translate-x-1/2 z-[60] w-72 bg-[#0d0d0d] border border-neutral-800 p-4 text-neutral-200 shadow-2xl pointer-events-auto transition-all">
           <button onClick={() => setSelectedLink(null)} className="absolute top-3 right-3 text-neutral-500 hover:text-white transition-colors">✕</button>
 
           <div className="text-[9px] uppercase tracking-wider text-neutral-500 font-semibold mb-3 border-b border-neutral-800 pb-1.5">Connection Details</div>

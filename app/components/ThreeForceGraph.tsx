@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback } from 'react';
+import React, { useRef, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import * as THREE from 'three';
 import SpriteText from 'three-spritetext';
@@ -95,15 +95,17 @@ interface ThreeForceGraphProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   selectedLink: any | null;
   hoveredNodeId: string | null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   hoveredLink: any | null;
   showLabels: boolean;
+  showNeighborLabels: boolean;
   sizeBasis: 'battles' | 'views';
   colorMode: 'group' | 'winRate' | 'views' | 'battles';
   linkColorMode: 'relation' | 'battle_type' | 'format';
   nodeStats: Record<string, { wins: number; losses: number; draws: number; total: number; winRate: number }>;
   highlightNodes: Set<string>;
   highlightLinks: Set<any>;
+  isCameraLocked: boolean;
+  showBackgroundLinks: boolean;
   handleSearchSelect: (node: any) => void;
   setHoveredNodeId: (id: string | null) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -122,12 +124,15 @@ function ThreeForceGraphComponent({
   hoveredNodeId,
   hoveredLink,
   showLabels,
+  showNeighborLabels,
   sizeBasis,
   colorMode,
   linkColorMode,
   nodeStats,
   highlightNodes,
   highlightLinks,
+  isCameraLocked,
+  showBackgroundLinks,
   handleSearchSelect,
   setHoveredNodeId,
   setHoveredLink,
@@ -136,10 +141,10 @@ function ThreeForceGraphComponent({
 }: ThreeForceGraphProps) {
 
   // --- LIVE STATE REF ---
-  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData });
+  const graphState = useRef({ selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, showNeighborLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData, isCameraLocked, showBackgroundLinks });
   useEffect(() => {
-    graphState.current = { selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData };
-  }, [selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData]);
+    graphState.current = { selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, showNeighborLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData, isCameraLocked, showBackgroundLinks };
+  }, [selectedNodeId, selectedLink, highlightNodes, highlightLinks, showLabels, showNeighborLabels, sizeBasis, colorMode, linkColorMode, nodeStats, hoveredNodeId, displayData, isCameraLocked, showBackgroundLinks]);
 
   // Flat array of active node groups to avoid full scene traversal
   const nodeGroupsRef = useRef<THREE.Group[]>([]);
@@ -156,31 +161,31 @@ function ThreeForceGraphComponent({
   // Helper to find the group containing all link lines in the Three.js scene without traversing
   const getLinkGroup = useCallback((): THREE.Group | null => {
     if (linkGroupRef.current) return linkGroupRef.current;
-    
+
     // Find the first active node group
     const activeNodeGroup = nodeGroupsRef.current.find(obj => obj.parent !== null);
     if (!activeNodeGroup) return null;
-    
+
     const nodeGroup = activeNodeGroup.parent;
     const graphScene = nodeGroup?.parent;
     if (!graphScene) return null;
-    
+
     // The linkGroup is the sibling of nodeGroup in graphScene.children
     const foundGroup = graphScene.children.find(child => child !== nodeGroup && child.type === 'Group') as THREE.Group | undefined;
     if (foundGroup) {
       linkGroupRef.current = foundGroup;
       return foundGroup;
     }
-    
+
     return null;
   }, []);
-  
+
   // Track camera state to detect motion and pause/resume animation frames
   const lastCameraState = useRef({
     position: new THREE.Vector3(),
     quaternion: new THREE.Quaternion(),
   });
-  
+
   const isLoopRunning = useRef(false);
 
   const triggerUpdate = useCallback(() => {
@@ -215,33 +220,114 @@ function ThreeForceGraphComponent({
         needsNextFrame = true;
       }
 
+      // Handle Camera Lock
+      if (state.isCameraLocked && state.selectedNodeId) {
+        const controls = fgRef.current?.controls();
+        if (controls) {
+          // Find the selected node object to get its exact world position
+          const selectedObj = nodeGroupsRef.current.find(obj => obj.userData?.node?.id === state.selectedNodeId);
+          if (selectedObj && selectedObj.parent) {
+            const worldPos = new THREE.Vector3();
+            selectedObj.getWorldPosition(worldPos);
+            // Lerp the target for a smooth tracking effect if it's moving fast
+            controls.target.lerp(worldPos, 0.1);
+            controls.update();
+            needsNextFrame = true;
+          }
+        }
+      }
+
       // Subgraph Foregrounding for Links
       const linkGroup = getLinkGroup();
       if (linkGroup) {
         linkGroup.children.forEach((obj: any) => {
           const link = obj.__data;
           if (!link) return;
-          
+
           let targetRenderOrder = 0;
-          let targetDepthTest = true;
+          let targetDepthWrite = true;
           if (state.selectedNodeId || state.selectedLink) {
             if (state.highlightLinks.has(link)) {
               targetRenderOrder = 10;
-              targetDepthTest = false;
+              targetDepthWrite = true;
+            } else {
+              targetRenderOrder = 0;
+              targetDepthWrite = false;
             }
           }
-          
+
           if (obj.renderOrder !== targetRenderOrder) {
             obj.renderOrder = targetRenderOrder;
             needsNextFrame = true;
           }
 
           if (obj.material) {
+            if (!obj.userData.clonedMaterial) {
+              const origMat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
+              if (origMat) {
+                const newMat = origMat.clone();
+                if (Array.isArray(obj.material)) {
+                  obj.material = [newMat];
+                } else {
+                  obj.material = newMat;
+                }
+                obj.userData.clonedMaterial = true;
+                obj.userData.baseOpacity = newMat.opacity;
+              }
+            }
+
             const mat = Array.isArray(obj.material) ? obj.material[0] : obj.material;
-            if (mat && mat.depthTest !== targetDepthTest) {
-              mat.depthTest = targetDepthTest;
-              mat.needsUpdate = true;
-              needsNextFrame = true;
+            if (mat) {
+              if (mat.depthTest !== true) {
+                mat.depthTest = true;
+                mat.needsUpdate = true;
+                needsNextFrame = true;
+              }
+              if (mat.depthWrite !== targetDepthWrite) {
+                mat.depthWrite = targetDepthWrite;
+                mat.needsUpdate = true;
+                needsNextFrame = true;
+              }
+
+              let distance = 1000;
+              if (link.source && link.target && link.source.x !== undefined && link.target.x !== undefined) {
+                const centerX = (link.source.x + link.target.x) / 2;
+                const centerY = (link.source.y + link.target.y) / 2;
+                const centerZ = (link.source.z + link.target.z) / 2;
+                distance = camPos.distanceTo(new THREE.Vector3(centerX, centerY, centerZ));
+              }
+
+              let distanceScale = 1.0;
+              if (distance < 1200) {
+                distanceScale = Math.max(0.05, Math.pow(distance / 1200, 1.5));
+              }
+
+              let opacityMultiplier = distanceScale;
+              const hasSelection = state.selectedNodeId || state.selectedLink;
+              const isHighlighted = hasSelection ? state.highlightLinks.has(link) : false;
+
+              if (!obj.userData.originalRaycast) {
+                obj.userData.originalRaycast = obj.raycast;
+              }
+
+              if (hasSelection && !isHighlighted) {
+                opacityMultiplier = state.showBackgroundLinks ? 1.0 : 0.0;
+                obj.raycast = () => { }; // Disable all interaction
+              } else if (isHighlighted) {
+                opacityMultiplier = 1.0;
+                obj.raycast = obj.userData.originalRaycast; // Restore interaction
+              } else {
+                obj.raycast = obj.userData.originalRaycast; // Restore interaction
+              }
+
+              const targetOpacity = (obj.userData.baseOpacity || 0.3) * opacityMultiplier;
+
+              if (Math.abs(mat.opacity - targetOpacity) > 0.01) {
+                mat.opacity = targetOpacity;
+                mat.transparent = true;
+                mat.needsUpdate = true;
+                needsNextFrame = true;
+              }
             }
           }
         });
@@ -274,27 +360,72 @@ function ThreeForceGraphComponent({
 
         // Handle Render Order for Subgraph Foregrounding
         let targetRenderOrder = 0;
-        let targetDepthTest = true;
+        let targetDepthWrite = true;
         if (state.selectedNodeId || state.selectedLink) {
-          targetRenderOrder = (isCenter || isHighlighted) ? 20 : 0;
-          targetDepthTest = !(isCenter || isHighlighted);
+          if (isCenter || isHighlighted) {
+            targetRenderOrder = 20;
+            targetDepthWrite = true;
+          } else {
+            targetRenderOrder = 0;
+            targetDepthWrite = false;
+          }
         }
+
         if (obj.renderOrder !== targetRenderOrder) {
           obj.renderOrder = targetRenderOrder;
           mesh.renderOrder = targetRenderOrder;
-          sprite.renderOrder = targetRenderOrder;
+          sprite.renderOrder = 30; // Sprites always render on top
           needsNextFrame = true;
         }
 
+        if (!obj.userData.originalRaycast) {
+          obj.userData.originalRaycast = obj.raycast;
+          mesh.userData.originalRaycast = mesh.raycast;
+          sprite.userData.originalRaycast = sprite.raycast;
+        }
+
+        if (state.selectedNodeId || state.selectedLink) {
+          if (!isCenter && !isHighlighted) {
+            obj.raycast = () => { }; // Disable all interaction
+            mesh.raycast = () => { };
+            sprite.raycast = () => { };
+          } else {
+            obj.raycast = obj.userData.originalRaycast;
+            mesh.raycast = mesh.userData.originalRaycast;
+            sprite.raycast = sprite.userData.originalRaycast;
+          }
+        } else {
+          obj.raycast = obj.userData.originalRaycast;
+          mesh.raycast = mesh.userData.originalRaycast;
+          sprite.raycast = sprite.userData.originalRaycast;
+        }
+
         if (mesh.material) {
-          const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-          if (mat) {
-            if (targetDepthTest === false && mat === BATTLE_MATERIAL) {
-              mesh.material = mat.clone();
+          const activeMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+          if (activeMat) {
+            if (activeMat.depthTest !== true) {
+              activeMat.depthTest = true;
+              activeMat.needsUpdate = true;
+              needsNextFrame = true;
             }
-            const activeMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-            if (activeMat && activeMat.depthTest !== targetDepthTest) {
-              activeMat.depthTest = targetDepthTest;
+            if (activeMat.depthWrite !== targetDepthWrite) {
+              activeMat.depthWrite = targetDepthWrite;
+              activeMat.needsUpdate = true;
+              needsNextFrame = true;
+            }
+
+            let targetNodeOpacity = 0.9;
+            if (state.selectedNodeId || state.selectedLink) {
+              if (!isCenter && !isHighlighted) {
+                targetNodeOpacity = 0.03;
+              } else if (isHighlighted && !isCenter) {
+                targetNodeOpacity = state.hoveredNodeId === node.id ? 1.0 : 0.7;
+              }
+            }
+
+            if (Math.abs(activeMat.opacity - targetNodeOpacity) > 0.01) {
+              activeMat.opacity = targetNodeOpacity;
+              activeMat.transparent = true;
               activeMat.needsUpdate = true;
               needsNextFrame = true;
             }
@@ -302,8 +433,8 @@ function ThreeForceGraphComponent({
         }
 
         if (sprite.material) {
-          if (sprite.material.depthTest !== targetDepthTest) {
-            sprite.material.depthTest = targetDepthTest;
+          if (sprite.material.depthTest !== false) {
+            sprite.material.depthTest = false;
             sprite.material.needsUpdate = true;
             needsNextFrame = true;
           }
@@ -338,8 +469,7 @@ function ThreeForceGraphComponent({
         // Node styling colors
         let targetColorStr = '#ffffff';
         if (state.selectedNodeId || state.selectedLink) {
-          if (isCenter) targetColorStr = '#FFFFFF';
-          else if (!isHighlighted) targetColorStr = '#333333';
+          if (!isCenter && !isHighlighted) targetColorStr = '#333333';
           else if (node.group === 'Battle') targetColorStr = '#eab308';
           else if (node.group === 'Team') targetColorStr = '#38bdf8';
           else if (state.colorMode === 'views') targetColorStr = getViewsColor(node.total_views ?? 0);
@@ -373,35 +503,41 @@ function ThreeForceGraphComponent({
         const nodeHeight = targetScale;
         let targetVisible = false;
         let tgtColor = '#e5e5e5';
-        let tgtHeight = 4.5;
-        let targetY = nodeHeight + 2.8;
+        let tgtHeight = 5.5;
+        let targetY = nodeHeight + 3.5;
         let targetOpacity = 0.7;
 
         if (state.selectedNodeId || state.selectedLink) {
-          // Use a soft power curve instead of linear multiplier to prevent massive text overlap
-          // At distance 400, scale is 1.0. At distance 1600, scale is only ~1.58 instead of 4.0
-          const distanceScale = Math.max(1.0, Math.pow(distance / 400, 0.5));
-          
+          // Linear scale for consistent screen size at any distance
+          const constantScreenScale = distance / 400;
+
           if (isCenter) {
             // Center node fades out very late
             let distanceOpacity = 1.0;
             if (distance > 1500) distanceOpacity = Math.max(0, 1.0 - (distance - 1500) / 500);
-            
+
             targetVisible = distanceOpacity > 0;
             tgtColor = '#ffffff';
-            tgtHeight = 6.0 * distanceScale;
-            targetY = nodeHeight + (3.5 * distanceScale);
+            tgtHeight = 8.0 * constantScreenScale;
+            targetY = nodeHeight + (4.5 * constantScreenScale);
             targetOpacity = distanceOpacity;
           } else if (isHighlighted) {
-            // Highlighted opponents fade out much sooner to prevent clutter
-            let distanceOpacity = 1.0;
-            if (distance > 600) distanceOpacity = Math.max(0, 1.0 - (distance - 600) / 600);
-            
-            targetVisible = distanceOpacity > 0;
-            tgtColor = '#ffffff';
-            tgtHeight = 4.0 * distanceScale;
-            targetY = nodeHeight + (2.5 * distanceScale);
-            targetOpacity = 0.85 * distanceOpacity;
+            if (!state.showNeighborLabels && state.hoveredNodeId !== node.id) {
+              targetVisible = false;
+            } else {
+              // Highlighted opponents fade out much sooner to prevent clutter
+              // Start fading at 200, fully invisible at 450
+              let distanceOpacity = 1.0;
+              if (distance > 200) {
+                distanceOpacity = Math.max(0, 1.0 - (distance - 200) / 250);
+              }
+
+              targetVisible = distanceOpacity > 0;
+              tgtColor = '#ffffff';
+              tgtHeight = 5.5 * constantScreenScale;
+              targetY = nodeHeight + (3.5 * constantScreenScale);
+              targetOpacity = state.hoveredNodeId === node.id ? 1.0 : (0.85 * distanceOpacity);
+            }
           }
         } else {
           const distSq = camPos.distanceToSquared(obj.position);
@@ -434,11 +570,6 @@ function ThreeForceGraphComponent({
           }
           if (sprite.material.opacity !== targetOpacity) {
             sprite.material.opacity = targetOpacity;
-            needsNextFrame = true;
-          }
-          if (sprite.material.depthTest !== targetDepthTest) {
-            sprite.material.depthTest = targetDepthTest;
-            sprite.material.needsUpdate = true;
             needsNextFrame = true;
           }
 
@@ -495,7 +626,7 @@ function ThreeForceGraphComponent({
   // Wake up render loop when visual props or highlight state change
   useEffect(() => {
     triggerUpdate();
-  }, [selectedNodeId, selectedLink, hoveredNodeId, hoveredLink, showLabels, sizeBasis, colorMode, linkColorMode, highlightNodes, highlightLinks, triggerUpdate]);
+  }, [selectedNodeId, selectedLink, hoveredNodeId, hoveredLink, showLabels, showNeighborLabels, sizeBasis, colorMode, linkColorMode, highlightNodes, highlightLinks, isCameraLocked, showBackgroundLinks, triggerUpdate]);
 
   // Reset local list of node groups and trigger frame request on new dataset
   useEffect(() => {
@@ -559,7 +690,7 @@ function ThreeForceGraphComponent({
     const sprite = new SpriteText(cleanLabel);
     sprite.name = 'node-label';
     sprite.fontFace = 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-    sprite.textHeight = 2.5;
+    sprite.textHeight = 3.5;
     sprite.color = 'rgba(255, 255, 255, 0.7)';
     sprite.backgroundColor = 'rgba(0, 0, 0, 0)'; // Explicitly transparent
     sprite.material.depthWrite = false; // Fixes the WebGL depth clipping artifacts (black box background)
@@ -664,20 +795,48 @@ function ThreeForceGraphComponent({
       width={dimensions.width}
       height={dimensions.height}
       graphData={displayData}
+      backgroundColor="#000000"
       onEngineTick={triggerUpdate}
 
-      nodeLabel={handleNodeLabel}
-      linkLabel={handleLinkLabel}
+      nodeLabel={(node: any) => {
+        if ((selectedNodeId || selectedLink) && !highlightNodes.has(node.id) && selectedNodeId !== node.id) return '';
+        return handleNodeLabel(node);
+      }}
+      linkLabel={(link: any) => {
+        if ((selectedNodeId || selectedLink) && !highlightLinks.has(link)) return '';
+        return handleLinkLabel(link);
+      }}
 
-      onNodeClick={handleSearchSelect}
-      onNodeHover={(node: any) => setHoveredNodeId(node ? node.id : null)}
-      onLinkHover={(link: any) => setHoveredLink(link)}
+      onNodeClick={(node: any) => {
+        if ((selectedNodeId || selectedLink) && !highlightNodes.has(node.id) && selectedNodeId !== node.id) {
+          // Do nothing, entirely non-interactive
+          return;
+        }
+        handleSearchSelect(node);
+      }}
+      onNodeHover={(node: any) => {
+        if (node && (selectedNodeId || selectedLink) && !highlightNodes.has(node.id) && selectedNodeId !== node.id) {
+          setHoveredNodeId(null);
+          return;
+        }
+        setHoveredNodeId(node ? node.id : null);
+      }}
+      onLinkHover={(link: any) => {
+        if (link && (selectedNodeId || selectedLink) && !highlightLinks.has(link)) {
+          setHoveredLink(null);
+          return;
+        }
+        setHoveredLink(link);
+      }}
       onBackgroundClick={() => {
         setSelectedNodeId(null);
         setSelectedLink(null);
       }}
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       onLinkClick={(link: any) => {
+        if ((selectedNodeId || selectedLink) && !highlightLinks.has(link)) {
+          // Do nothing, entirely non-interactive
+          return;
+        }
         setSelectedLink(link);
         setSelectedNodeId(null);
       }}
@@ -696,7 +855,7 @@ function ThreeForceGraphComponent({
             }
             return '#FFFFFF';
           }
-          return '#1a1a1a';
+          return showBackgroundLinks ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0,0,0,0)';
         }
 
         if (linkColorMode === 'battle_type') {
@@ -713,19 +872,19 @@ function ThreeForceGraphComponent({
           return '#6b7280';
         } else {
           // relation (default)
-          if (link.type === 'MEMBER_OF') return 'rgba(14, 165, 233, 0.15)';
-          if (link.type === 'WON') return 'rgba(74, 222, 128, 0.4)';
-          if (link.type === 'LOST') return 'rgba(248, 113, 113, 0.2)';
-          if (link.match_type === 'tournament' || link.match_type === 'non_tournament_judged') return 'rgba(234, 179, 8, 0.25)';
-          if (link.match_type === 'promo') return 'rgba(236, 72, 153, 0.25)';
+          if (link.type === 'MEMBER_OF') return 'rgba(14, 165, 233, 0.3)';
+          if (link.type === 'WON') return 'rgba(74, 222, 128, 0.6)';
+          if (link.type === 'LOST') return 'rgba(248, 113, 113, 0.4)';
+          if (link.match_type === 'tournament' || link.match_type === 'non_tournament_judged') return 'rgba(234, 179, 8, 0.4)';
+          if (link.match_type === 'promo') return 'rgba(236, 72, 153, 0.4)';
           return '#6b7280';
         }
       }}
       linkWidth={(link: any) => {
         if (selectedNodeId || selectedLink) {
-          return highlightLinks.has(link) ? 1.5 : 0.3;
+          return highlightLinks.has(link) ? 1.5 : (showBackgroundLinks ? 0.3 : 0);
         }
-        return 0.8;
+        return 1.5;
       }}
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

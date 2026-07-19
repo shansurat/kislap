@@ -24,6 +24,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [selectedLink, setSelectedLink] = useState<any | null>(null);
+  const [isCameraLocked, setIsCameraLocked] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'name' | 'winRate' | 'views' | 'wins' | 'losses'>('name');
   const [sizeBasis, setSizeBasis] = useState<'battles' | 'views'>('battles');
@@ -34,9 +35,14 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [hoveredLink, setHoveredLink] = useState<any | null>(null);
+  const [showNeighborLabels, setShowNeighborLabels] = useState<boolean>(false);
+  const [showBackgroundLinks, setShowBackgroundLinks] = useState<boolean>(false);
 
   // Synchronize state and filter modifications with graph node selections
   useEffect(() => {
+    setHoveredNodeId(null);
+    setIsCameraLocked(false);
+    setSearchQuery('');
     setSelectedNodeId(null);
     setSelectedLink(null);
   }, [selectedYear, selectedMatchType, selectedFormats, officialOnly]);
@@ -128,7 +134,7 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
             directNeighbors.add(sId);
             const sourceGroup = displayData.nodes.find(n => n.id === sId)?.group;
             if (sourceGroup === 'Battle') battleHubs.add(sId);
-            if (sourceGroup === 'Team' && l.type === 'MEMBER_OF') teamIds.add(sId);
+            if (sourceGroup === 'Team' && l.type === 'MEMBER_OF') teamIds.add(tId);
           }
         });
 
@@ -238,16 +244,64 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
   return (
     <div ref={containerRef} className="w-full h-full relative group font-sans">
       
+      {/* Search Bar */}
+      <div className="absolute top-6 left-1/2 -translate-x-1/2 z-[65] w-96 pointer-events-auto">
+        <div className="relative">
+          <div className="flex items-center bg-[#0d0d0d] border border-neutral-800 shadow-2xl px-3 py-2">
+            <span className="text-neutral-500 mr-2">🔍</span>
+            <input
+              type="text"
+              placeholder="Search emcee or team..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-transparent text-neutral-200 text-sm focus:outline-none placeholder-neutral-600"
+            />
+          </div>
+          {searchQuery.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-[#0d0d0d] border border-neutral-800 max-h-60 overflow-y-auto custom-scrollbar shadow-2xl">
+              {filteredEmceesList.slice(0, 50).map(node => (
+                <button 
+                  key={node.id} 
+                  onClick={() => { 
+                    handleSearchSelect(node); 
+                    setSearchQuery(''); 
+                  }} 
+                  className="w-full text-left px-3 py-2 text-xs flex items-center gap-2 text-neutral-400 hover:bg-neutral-900 transition-colors border-none"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {node.avatar_url ? (
+                    <img src={node.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" />
+                  ) : (
+                    <div className="w-5 h-5 bg-neutral-900 border border-neutral-800 flex items-center justify-center text-[9px] shrink-0 rounded-none text-neutral-400">
+                      {node.name.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <span className="truncate flex-1 font-medium">
+                    {node.group === 'Team' ? '[Team] ' : ''}
+                    {node.name}
+                  </span>
+                </button>
+              ))}
+              {filteredEmceesList.length === 0 && (
+                <div className="px-3 py-2 text-xs text-neutral-600">No results found</div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Node and Link Details Overlay */}
-      <DetailOverlay
-        selectedNode={selectedNode}
-        selectedLink={selectedLink}
-        setSelectedNodeId={setSelectedNodeId}
-        setSelectedLink={setSelectedLink}
-        nodeStats={nodeStats}
-        battleParticipants={battleParticipants}
-        displayData={displayData}
-      />
+        <DetailOverlay
+          selectedNode={selectedNode}
+          selectedLink={selectedLink}
+          setSelectedNodeId={setSelectedNodeId}
+          setSelectedLink={setSelectedLink}
+          nodeStats={nodeStats}
+          battleParticipants={battleParticipants}
+          displayData={displayData}
+          isCameraLocked={isCameraLocked}
+          setIsCameraLocked={setIsCameraLocked}
+        />
 
       {/* Control Panel Menu Toggle for Mobile */}
       <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="md:hidden absolute bottom-6 left-6 z-[60] w-10 h-10 rounded-md bg-[#121212]/30 backdrop-blur-md border border-white/5 flex items-center justify-center text-[#EFEFEF] opacity-60 hover:opacity-100 transition-all">
@@ -286,6 +340,10 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
           setLinkColorMode={setLinkColorMode}
           showLabels={showLabels}
           setShowLabels={setShowLabels}
+          showNeighborLabels={showNeighborLabels}
+          setShowNeighborLabels={setShowNeighborLabels}
+          showBackgroundLinks={showBackgroundLinks}
+          setShowBackgroundLinks={setShowBackgroundLinks}
         />
       </div>
 
@@ -302,12 +360,15 @@ export default function GraphClient({ graphData }: { graphData: GraphData }) {
         hoveredNodeId={hoveredNodeId}
         hoveredLink={hoveredLink}
         showLabels={showLabels}
+        showNeighborLabels={showNeighborLabels}
         sizeBasis={sizeBasis}
         colorMode={colorMode}
         linkColorMode={linkColorMode}
         nodeStats={nodeStats}
         highlightNodes={highlightNodes}
         highlightLinks={highlightLinks}
+        isCameraLocked={isCameraLocked}
+        showBackgroundLinks={showBackgroundLinks}
         handleSearchSelect={handleSearchSelect}
         setHoveredNodeId={setHoveredNodeId}
         setHoveredLink={setHoveredLink}
