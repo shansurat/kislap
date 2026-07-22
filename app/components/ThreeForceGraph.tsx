@@ -310,8 +310,10 @@ function ThreeForceGraphComponent({
                 obj.userData.originalRaycast = obj.raycast;
               }
 
+              let targetOpacity = (obj.userData.baseOpacity || 0.3) * opacityMultiplier;
+
               if (hasSelection && !isHighlighted) {
-                opacityMultiplier = state.showBackgroundLinks ? 1.0 : 0.0;
+                targetOpacity = state.showBackgroundLinks ? 0.18 : 0.0;
                 obj.raycast = () => { }; // Disable all interaction
               } else if (isHighlighted) {
                 opacityMultiplier = 1.0;
@@ -319,8 +321,6 @@ function ThreeForceGraphComponent({
               } else {
                 obj.raycast = obj.userData.originalRaycast; // Restore interaction
               }
-
-              const targetOpacity = (obj.userData.baseOpacity || 0.3) * opacityMultiplier;
 
               if (Math.abs(mat.opacity - targetOpacity) > 0.01) {
                 mat.opacity = targetOpacity;
@@ -855,21 +855,21 @@ function ThreeForceGraphComponent({
             }
             return '#FFFFFF';
           }
-          return showBackgroundLinks ? 'rgba(255, 255, 255, 0.04)' : 'rgba(0,0,0,0)';
+          return showBackgroundLinks ? 'rgba(255, 255, 255, 0.18)' : 'rgba(0,0,0,0)';
         }
 
         if (linkColorMode === 'battle_type') {
-          if (link.match_type === 'tournament' || link.match_type === 'non_tournament_judged') return '#eab308';
-          if (link.match_type === 'promo') return '#ec4899';
-          if (link.match_type === 'tryout') return '#3b82f6';
-          return '#6b7280';
+          if (link.match_type === 'tournament' || link.match_type === 'non_tournament_judged') return 'rgba(234, 179, 8, 0.6)';
+          if (link.match_type === 'promo') return 'rgba(236, 72, 153, 0.6)';
+          if (link.match_type === 'tryout') return 'rgba(59, 130, 246, 0.6)';
+          return 'rgba(107, 114, 128, 0.4)';
         } else if (linkColorMode === 'format') {
-          if (link.match_format === '2v2') return '#a855f7';
-          if (link.match_format === 'royal_rumble') return '#eab308';
-          if (link.match_format === '3way') return '#ec4899';
-          if (link.match_format === '3v3' || link.match_format === '5v5') return '#3b82f6';
-          if (link.match_format === 'handicap') return '#10b981';
-          return '#6b7280';
+          if (link.match_format === '2v2') return 'rgba(168, 85, 247, 0.6)';
+          if (link.match_format === 'royal_rumble') return 'rgba(234, 179, 8, 0.6)';
+          if (link.match_format === '3way') return 'rgba(236, 72, 153, 0.6)';
+          if (link.match_format === '3v3' || link.match_format === '5v5') return 'rgba(59, 130, 246, 0.6)';
+          if (link.match_format === 'handicap') return 'rgba(16, 185, 129, 0.6)';
+          return 'rgba(107, 114, 128, 0.4)';
         } else {
           // relation (default)
           if (link.type === 'MEMBER_OF') return 'rgba(14, 165, 233, 0.3)';
@@ -882,7 +882,7 @@ function ThreeForceGraphComponent({
       }}
       linkWidth={(link: any) => {
         if (selectedNodeId || selectedLink) {
-          return highlightLinks.has(link) ? 1.5 : (showBackgroundLinks ? 0.3 : 0);
+          return highlightLinks.has(link) ? 1.5 : (showBackgroundLinks ? 0.8 : 0);
         }
         return 1.5;
       }}
